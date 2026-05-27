@@ -1,0 +1,11 @@
+google-genai
+pydantic
+sqlglot
+fastapi
+uvicorn
+streamlit
+folium
+streamlit-folium
+requests
+python-dotenv
+pytest
