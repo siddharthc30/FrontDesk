@@ -120,10 +120,21 @@ def _build_prompt(question: str, error_context: str | None = None) -> str:
     return "\n".join(parts)
 
 
+# ── Langfuse @observe decorator (optional) ────────────────────────────────────
+try:
+    from langfuse import observe as _observe
+except ImportError:
+    def _observe(name: str | None = None, **_kw):  # type: ignore[misc]
+        def _decorator(fn):
+            return fn
+        return _decorator
+
+
 class FallbackError(Exception):
     pass
 
 
+@_observe(name="execute_fallback")
 async def execute_fallback(
     question: str,
     conn: sqlite3.Connection,

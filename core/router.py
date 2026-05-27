@@ -8,6 +8,15 @@ from __future__ import annotations
 from core.db import get_data_dictionary
 from core.models import QuerySpec, SearchParams
 
+# ── Langfuse @observe decorator (optional) ────────────────────────────────────
+try:
+    from langfuse import observe as _observe
+except ImportError:
+    def _observe(name: str | None = None, **_kw):  # type: ignore[misc]
+        def _decorator(fn):
+            return fn
+        return _decorator
+
 # ── router system prompt ─────────────────────────────────────────────────────
 
 ROUTER_SYSTEM_PROMPT = f"""You are a query router for a hotel database. Given a user's question, \
@@ -57,6 +66,7 @@ IMPORTANT:
 """
 
 
+@_observe(name="route_question")
 async def route_question(
     question: str,
     user_lat: float | None = None,

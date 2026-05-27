@@ -9,3 +9,5 @@ streamlit-folium
 requests
 python-dotenv
 pytest
+langfuse
+openinference-instrumentation-google-genai
