@@ -9,6 +9,7 @@ from __future__ import annotations
 import sqlite3
 
 from core.models import QuerySpec
+from core.observability import observe
 
 # ── allowlists ───────────────────────────────────────────────────────────────
 
@@ -105,6 +106,7 @@ def compile_query_spec(spec: QuerySpec) -> tuple[str, list]:
     return sql, params
 
 
+@observe(name="execute_semantic")
 def execute_semantic_query(spec: QuerySpec, conn: sqlite3.Connection) -> list[dict]:
     """Compile and execute a QuerySpec. Returns list of result dicts."""
     sql, params = compile_query_spec(spec)

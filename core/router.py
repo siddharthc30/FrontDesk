@@ -1,23 +1,19 @@
 """
 LLM router: classifies the user's question and routes to the correct path.
-Makes exactly ONE Gemini function-calling request per question.
+Makes exactly ONE LLM function-calling request per question.
+
+Tools are defined in the provider-agnostic OpenAI format (list of dicts).
+core/llm.py converts them internally to Gemini FunctionDeclaration objects when
+LLM_PROVIDER=gemini.
 """
 
 from __future__ import annotations
 
 from core.db import get_data_dictionary
 from core.models import QuerySpec, SearchParams
+from core.observability import observe as _observe
 
-# ── Langfuse @observe decorator (optional) ────────────────────────────────────
-try:
-    from langfuse import observe as _observe
-except ImportError:
-    def _observe(name: str | None = None, **_kw):  # type: ignore[misc]
-        def _decorator(fn):
-            return fn
-        return _decorator
-
-# ── router system prompt ─────────────────────────────────────────────────────
+# ── Router system prompt ──────────────────────────────────────────────────────
 
 ROUTER_SYSTEM_PROMPT = f"""You are a query router for a hotel database. Given a user's question, \
 you must call exactly ONE of the available functions.
@@ -65,6 +61,115 @@ IMPORTANT:
 - For "near me" queries, use the user's provided coordinates with the haversine function.
 """
 
+# ── Provider-agnostic tool definitions (OpenAI format) ────────────────────────
+# core/llm.py converts these to Gemini FunctionDeclarations when provider=gemini.
+
+ROUTER_TOOLS: list[dict] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_hotels",
+            "description": "Search/filter/sort hotels by location, rating, price, or amenities.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city":               {"type": "string", "description": "Filter by city name"},
+                    "country":            {"type": "string", "description": "Filter by country name"},
+                    "min_rating":         {"type": "number", "description": "Minimum avg_score"},
+                    "max_rating":         {"type": "number", "description": "Maximum avg_score"},
+                    "min_reviews":        {"type": "integer", "description": "Minimum total_reviews"},
+                    "price_min":          {"type": "integer", "description": "Minimum price_per_night (USD)"},
+                    "price_max":          {"type": "integer", "description": "Maximum price_per_night (USD)"},
+                    "required_amenities": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "List of amenity column names to require, e.g. [\"has_pool\",\"has_gym\"]. "
+                            "Valid values: has_wifi, has_pool, has_gym, has_sauna, "
+                            "has_restaurant, has_room_service, has_lounge, has_event_space"
+                        ),
+                    },
+                    "sort_by":    {
+                        "type": "string",
+                        "description": "One of: avg_score, total_reviews, distance, price",
+                    },
+                    "sort_order": {"type": "string", "enum": ["asc", "desc"]},
+                    "limit":      {"type": "integer"},
+                    "user_lat":   {"type": "number"},
+                    "user_lng":   {"type": "number"},
+                    "radius_km":  {"type": "number"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "semantic_query",
+            "description": (
+                "Run an analytical query: count, average, min, max, sum, group-by. "
+                "Use for questions about statistics, rankings of groups, or aggregates."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "metric": {
+                        "type": "string",
+                        "enum": [
+                            "count", "avg_score", "avg_reviews", "min_score", "max_score",
+                            "min_reviews", "max_reviews", "total_reviews_sum",
+                            "avg_price", "min_price", "max_price",
+                        ],
+                    },
+                    "group_by":   {"type": "string", "enum": ["city", "country"]},
+                    "filters":    {
+                        "type": "object",
+                        "description": (
+                            "Key-value filters. Keys: city, country, min_rating, max_rating, "
+                            "min_reviews, price_min, price_max, has_wifi, has_pool, has_gym, "
+                            "has_sauna, has_restaurant, has_room_service, has_lounge, has_event_space"
+                        ),
+                    },
+                    "sort_order": {"type": "string", "enum": ["asc", "desc"]},
+                    "limit":      {"type": "integer"},
+                },
+                "required": ["metric"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "text_to_sql",
+            "description": (
+                "Arbitrary SQL SELECT for questions that don't fit the other tools. "
+                "Use for complex WHERE conditions, LIKE searches, OR clauses, etc."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sql": {"type": "string", "description": "A single SELECT statement"},
+                },
+                "required": ["sql"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "decline",
+            "description": "The question cannot be answered from the available hotel data.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {"type": "string", "description": "Why it can't be answered"},
+                },
+                "required": ["reason"],
+            },
+        },
+    },
+]
+
 
 @_observe(name="route_question")
 async def route_question(
@@ -78,141 +183,25 @@ async def route_question(
       "parameterized" | "semantic" | "fallback" | "declined"
     and path_input is the corresponding SearchParams / QuerySpec / decline_reason.
     """
-    from google.genai import types
+    from core.llm import function_call  # deferred to keep module importable without LLM setup
 
-    from core.llm import get_client, get_model
-
-    # ── function declarations ─────────────────────────────────────────────────
-    search_hotels_fn = types.FunctionDeclaration(
-        name="search_hotels",
-        description="Search/filter/sort hotels by location, rating, price, or amenities.",
-        parameters=types.Schema(
-            type="OBJECT",
-            properties={
-                "city":               types.Schema(type="STRING"),
-                "country":            types.Schema(type="STRING"),
-                "min_rating":         types.Schema(type="NUMBER"),
-                "max_rating":         types.Schema(type="NUMBER"),
-                "min_reviews":        types.Schema(type="INTEGER"),
-                "price_min":          types.Schema(type="INTEGER"),
-                "price_max":          types.Schema(type="INTEGER"),
-                "required_amenities": types.Schema(
-                    type="ARRAY",
-                    items=types.Schema(type="STRING"),
-                    description=(
-                        "List of amenity column names to require, e.g. "
-                        '["has_pool","has_gym"]. '
-                        "Valid values: has_wifi, has_pool, has_gym, has_sauna, "
-                        "has_restaurant, has_room_service, has_lounge, has_event_space"
-                    ),
-                ),
-                "sort_by":    types.Schema(type="STRING",
-                    description='One of: "avg_score", "total_reviews", "distance", "price"'),
-                "sort_order": types.Schema(type="STRING", enum=["asc", "desc"]),
-                "limit":      types.Schema(type="INTEGER"),
-                "user_lat":   types.Schema(type="NUMBER"),
-                "user_lng":   types.Schema(type="NUMBER"),
-                "radius_km":  types.Schema(type="NUMBER"),
-            },
-        ),
-    )
-
-    semantic_query_fn = types.FunctionDeclaration(
-        name="semantic_query",
-        description=(
-            "Run an analytical query: count, average, min, max, sum, group-by. "
-            "Use for questions about statistics, rankings of groups, or aggregates."
-        ),
-        parameters=types.Schema(
-            type="OBJECT",
-            properties={
-                "metric": types.Schema(
-                    type="STRING",
-                    enum=list([
-                        "count", "avg_score", "avg_reviews", "min_score", "max_score",
-                        "min_reviews", "max_reviews", "total_reviews_sum",
-                        "avg_price", "min_price", "max_price",
-                    ]),
-                ),
-                "group_by":   types.Schema(type="STRING", enum=["city", "country"]),
-                "filters":    types.Schema(
-                    type="OBJECT",
-                    description=(
-                        "Key-value filters. Keys: city, country, min_rating, max_rating, "
-                        "min_reviews, price_min, price_max, has_wifi, has_pool, has_gym, "
-                        "has_sauna, has_restaurant, has_room_service, has_lounge, has_event_space"
-                    ),
-                ),
-                "sort_order": types.Schema(type="STRING", enum=["asc", "desc"]),
-                "limit":      types.Schema(type="INTEGER"),
-            },
-            required=["metric"],
-        ),
-    )
-
-    text_to_sql_fn = types.FunctionDeclaration(
-        name="text_to_sql",
-        description=(
-            "Arbitrary SQL SELECT for questions that don't fit the other tools. "
-            "Use for complex WHERE conditions, LIKE searches, OR clauses, etc."
-        ),
-        parameters=types.Schema(
-            type="OBJECT",
-            properties={
-                "sql": types.Schema(type="STRING", description="A single SELECT statement"),
-            },
-            required=["sql"],
-        ),
-    )
-
-    decline_fn = types.FunctionDeclaration(
-        name="decline",
-        description="The question cannot be answered from the available hotel data.",
-        parameters=types.Schema(
-            type="OBJECT",
-            properties={
-                "reason": types.Schema(type="STRING"),
-            },
-            required=["reason"],
-        ),
-    )
-
-    tools = types.Tool(function_declarations=[
-        search_hotels_fn, semantic_query_fn, text_to_sql_fn, decline_fn,
-    ])
-
-    # ── build the question payload (include coordinates if provided) ──────────
+    # ── Build the question payload (include coordinates if provided) ──────────
     question_with_context = question
     if user_lat is not None and user_lng is not None:
         question_with_context += f" [User location: lat={user_lat}, lng={user_lng}]"
 
-    # ── single Gemini call ────────────────────────────────────────────────────
-    client = get_client()
-    model = get_model()
-    response = client.models.generate_content(
-        model=model,
-        contents=question_with_context,
-        config=types.GenerateContentConfig(
-            system_instruction=ROUTER_SYSTEM_PROMPT,
-            temperature=0.0,
-            tools=[tools],
-            tool_config=types.ToolConfig(
-                function_calling_config=types.FunctionCallingConfig(mode="ANY")
-            ),
-        ),
-    )
-
-    # ── parse function call ───────────────────────────────────────────────────
+    # ── Single LLM function-calling request ───────────────────────────────────
     try:
-        part = response.candidates[0].content.parts[0]
-        if not part.function_call:
-            return "declined", "Router did not return a function call."
-        fn_name = part.function_call.name
-        fn_args = dict(part.function_call.args)
-    except (IndexError, AttributeError) as e:
-        return "declined", f"Failed to parse router response: {e}"
+        fn_name, fn_args = await function_call(
+            messages=[{"role": "user", "content": question_with_context}],
+            tools=ROUTER_TOOLS,
+            system=ROUTER_SYSTEM_PROMPT,
+            model_tier="router",
+        )
+    except Exception as e:  # noqa: BLE001
+        return "declined", f"Router call failed: {e}"
 
-    # ── dispatch ──────────────────────────────────────────────────────────────
+    # ── Dispatch ──────────────────────────────────────────────────────────────
     if fn_name == "search_hotels":
         return "parameterized", SearchParams(**fn_args)
 
@@ -220,7 +209,8 @@ async def route_question(
         return "semantic", QuerySpec(**fn_args)
 
     if fn_name == "text_to_sql":
-        # Router gave SQL but we pass the original question to fallback for its own generation
+        # Router chose the fallback path; pass the original question so
+        # execute_fallback() builds its own carefully-prompted SQL.
         return "fallback", question
 
     if fn_name == "decline":

@@ -1,8 +1,10 @@
 google-genai
+openai>=1.0.0
 pydantic
 sqlglot
 fastapi
 uvicorn
+sse-starlette
 streamlit
 folium
 streamlit-folium
@@ -11,3 +13,4 @@ python-dotenv
 pytest
 langfuse
 openinference-instrumentation-google-genai
+openinference-instrumentation-openai

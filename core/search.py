@@ -8,6 +8,7 @@ from __future__ import annotations
 import sqlite3
 
 from core.models import HotelRow, SearchParams
+from core.observability import observe
 
 AMENITY_ALLOWLIST: frozenset[str] = frozenset({
     "has_wifi",
@@ -28,6 +29,7 @@ SORT_COLUMN_MAP: dict[str, str] = {
 }
 
 
+@observe(name="search_hotels")
 def search_hotels(params: SearchParams, conn: sqlite3.Connection) -> list[HotelRow]:
     """Build and execute a parameterized SELECT from SearchParams.
     All user-supplied values go through ? placeholders; column names come from allowlists."""

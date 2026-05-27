@@ -13,15 +13,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# ── Langfuse @observe decorator (optional) ────────────────────────────────────
-try:
-    from langfuse import observe as _observe
-except ImportError:  # Langfuse not installed or not configured
-    def _observe(name: str | None = None, **_kw):  # type: ignore[misc]
-        """No-op decorator when Langfuse is unavailable."""
-        def _decorator(fn):
-            return fn
-        return _decorator
+from core.observability import observe as _observe
 
 
 def _format_rows(rows: list[dict]) -> str:
@@ -60,6 +52,16 @@ NARRATION_SYSTEM_PROMPT = (
     "Be concise and specific."
 )
 
+# JSON schema for the narration response (OpenAI-style; Gemini converts internally).
+_NARRATION_JSON_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "answer":   {"type": "string"},
+        "insights": {"type": "string"},
+    },
+    "required": ["answer", "insights"],
+}
+
 
 @_observe(name="narrate_results")
 async def narrate_results(
@@ -73,18 +75,12 @@ async def narrate_results(
     Returns (answer, insights).
     Falls back to a plain-text answer if JSON parsing fails.
     """
-    from google.genai import types
-
-    from core.llm import get_client, get_model
+    from core.llm import chat_completion  # deferred import keeps module importable without LLM
 
     n = len(rows)
     formatted = _format_rows(rows)
 
-    if n == 0:
-        # Honest empty-result handling — still call the model for a polished message
-        empty_note = "No rows were returned for this query."
-    else:
-        empty_note = ""
+    empty_note = "No rows were returned for this query." if n == 0 else ""
 
     prompt = (
         f"USER QUESTION: {question}\n\n"
@@ -98,28 +94,16 @@ async def narrate_results(
         "If no results were returned, say so honestly. Do not make up hotels or scores."
     )
 
-    client = get_client()
-    model = get_model()
-
     try:
-        response = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=NARRATION_SYSTEM_PROMPT,
-                temperature=0.2,
-                response_mime_type="application/json",
-                response_schema=types.Schema(
-                    type="OBJECT",
-                    properties={
-                        "answer":   types.Schema(type="STRING"),
-                        "insights": types.Schema(type="STRING"),
-                    },
-                    required=["answer", "insights"],
-                ),
-            ),
+        raw = await chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+            system=NARRATION_SYSTEM_PROMPT,
+            model_tier="main",
+            response_json=True,
+            json_schema=_NARRATION_JSON_SCHEMA,
+            temperature=0.2,
         )
-        result = json.loads(response.text)
+        result = json.loads(raw)
         answer   = str(result.get("answer", "")).strip()
         insights = str(result.get("insights", "")).strip()
         if not answer:

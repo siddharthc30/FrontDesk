@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Raw data
+Hotel_Reviews.csv
+Hotel_Reviews.csv.zip
