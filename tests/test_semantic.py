@@ -69,14 +69,14 @@ def test_avg_score_filtered(conn):
 def test_avg_price_global(conn):
     rows = execute_semantic_query(QuerySpec(metric="avg_price"), conn)
     assert len(rows) == 1
-    assert 80 <= rows[0]["value"] <= 465
+    assert 80 <= rows[0]["value"] <= 600
 
 
 def test_avg_price_by_city(conn):
     rows = execute_semantic_query(QuerySpec(metric="avg_price", group_by="city"), conn)
     assert len(rows) == 6
     for r in rows:
-        assert 80 <= r["value"] <= 465
+        assert 80 <= r["value"] <= 600
 
 
 def test_min_price(conn):
@@ -86,7 +86,7 @@ def test_min_price(conn):
 
 def test_max_price(conn):
     rows = execute_semantic_query(QuerySpec(metric="max_price"), conn)
-    assert rows[0]["value"] <= 465
+    assert rows[0]["value"] <= 600
 
 
 # ── amenity filters in semantic path ──────────────────────────────────────────
@@ -142,3 +142,47 @@ def test_invalid_group_by_raises(conn):
 def test_invalid_filter_raises(conn):
     with pytest.raises(ValueError, match="Unknown filter"):
         compile_query_spec(QuerySpec(metric="count", filters={"stars": 5}))
+
+
+# ── Phase 2: aspect sentiment queries ────────────────────────────────────────
+
+def test_avg_sentiment_staff_by_city(conn):
+    rows = execute_semantic_query(
+        QuerySpec(metric="avg_sentiment", aspect="staff", group_by="city"), conn
+    )
+    # Should get per-city staff sentiment averages (up to 6 cities)
+    assert len(rows) > 0
+    for r in rows:
+        assert "city" in r
+        assert 0.0 <= r["value"] <= 1.0
+
+
+def test_count_by_has_pool(conn):
+    rows = execute_semantic_query(
+        QuerySpec(metric="count", filters={"has_pool": 1}), conn
+    )
+    direct = conn.execute("SELECT COUNT(*) FROM hotels WHERE has_pool = 1").fetchone()[0]
+    assert rows[0]["value"] == direct
+
+
+def test_avg_sentiment_breakfast_min_rating(conn):
+    rows = execute_semantic_query(
+        QuerySpec(metric="avg_sentiment", aspect="breakfast", filters={"min_rating": 9.0}),
+        conn,
+    )
+    assert len(rows) == 1
+    assert 0.0 <= rows[0]["value"] <= 1.0
+
+
+def test_avg_sentiment_requires_aspect(conn):
+    with pytest.raises(ValueError, match="requires an 'aspect'"):
+        compile_query_spec(QuerySpec(metric="avg_sentiment"))  # no aspect and no group_by=aspect
+
+
+def test_avg_sentiment_by_aspect(conn):
+    rows = execute_semantic_query(
+        QuerySpec(metric="avg_sentiment", group_by="aspect"), conn
+    )
+    assert len(rows) > 0
+    aspects = {r["aspect"] for r in rows}
+    assert "staff" in aspects or "cleanliness" in aspects

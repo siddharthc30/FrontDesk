@@ -15,16 +15,28 @@ from core.db import get_data_dictionary
 
 # ── constants ────────────────────────────────────────────────────────────────
 
-ALLOWED_TABLES: frozenset[str] = frozenset({"hotels"})
+ALLOWED_TABLES: frozenset[str] = frozenset({
+    "hotels", "reviews", "hotel_aspect_sentiment",
+})
 
 ALLOWED_COLUMNS: frozenset[str] = frozenset({
-    "id", "name", "address", "city", "country",
+    # hotels table
+    "hotel_id", "name", "address", "city", "country",
     "latitude", "longitude", "avg_score", "total_reviews",
     "price_per_night",
     "has_wifi", "has_pool", "has_gym", "has_sauna",
     "has_restaurant", "has_room_service", "has_lounge", "has_event_space",
-    # computed alias used in SELECT expressions
-    "distance_km", "value", "count", "n",
+    # reviews table
+    "review_id", "review_date", "reviewer_nationality",
+    "positive_review", "positive_word_count",
+    "negative_review", "negative_word_count",
+    "reviewer_score", "tags", "days_since_review",
+    # hotel_aspect_sentiment table
+    "aspect", "sentiment", "mention_count", "pos_count", "neg_count", "is_facility",
+    # computed aliases used in SELECT/ORDER BY expressions
+    "distance_km", "value", "count", "n", "avg_sentiment",
+    "avg_score", "avg_price", "avg_reviews", "total",
+    "hotel_avg_score", "reviewer_avg_score",
 })
 
 # Hardcoded few-shot examples — NOT generated; teach the model table/column names.
@@ -57,11 +69,22 @@ SQL: SELECT city, ROUND(AVG(price_per_night), 0) AS avg_price FROM hotels GROUP 
 
 Q: "Which hotels have both a gym and a sauna?"
 SQL: SELECT * FROM hotels WHERE has_gym = 1 AND has_sauna = 1 ORDER BY avg_score DESC
+
+Q: "Which hotels have the most reviews?"
+SQL: SELECT hotel_id, name, city, total_reviews FROM hotels ORDER BY total_reviews DESC LIMIT 10
+
+Q: "What is the average reviewer score vs hotel avg_score by city?"
+SQL: SELECT h.city, ROUND(AVG(h.avg_score), 2) AS hotel_avg_score, ROUND(AVG(r.reviewer_score), 2) AS reviewer_avg_score FROM hotels h JOIN reviews r ON r.hotel_id = h.hotel_id GROUP BY h.city ORDER BY hotel_avg_score DESC
+
+Q: "Which aspect has the highest average sentiment?"
+SQL: SELECT aspect, ROUND(AVG(sentiment), 3) AS avg_sentiment FROM hotel_aspect_sentiment GROUP BY aspect ORDER BY avg_sentiment DESC
 """.strip()
 
 SYSTEM_INSTRUCTION = (
-    "You are a SQL expert. Write a single SELECT statement against the hotels table. "
+    "You are a SQL expert. Write a single SELECT statement against the hotel database. "
+    "Available tables: hotels, reviews, hotel_aspect_sentiment. "
     "Use only the columns listed in the schema below. "
+    "Join hotels and reviews on hotel_id. Join hotels and hotel_aspect_sentiment on hotel_id. "
     "Do not use INSERT, UPDATE, DELETE, DROP, ALTER, ATTACH, or PRAGMA. "
     "Return ONLY the SQL — no markdown fences, no explanation."
 )

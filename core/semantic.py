@@ -25,32 +25,46 @@ ALLOWED_METRICS: dict[str, str] = {
     "avg_price":         "ROUND(AVG(price_per_night), 0)",
     "min_price":         "MIN(price_per_night)",
     "max_price":         "MAX(price_per_night)",
+    # aspect-sentiment metric — requires spec.aspect to be set
+    "avg_sentiment":     "ROUND(AVG(a.sentiment), 3)",
 }
 
 ALLOWED_GROUP_BY: frozenset[str] = frozenset({
     "city",
     "country",
+    "aspect",  # group across all aspects of a hotel set
 })
 
 # filter_key -> (sql_fragment_with_placeholder, python_type)
+# Filters on the hotels table (h alias when joining aspect table)
 ALLOWED_FILTERS: dict[str, tuple[str, type]] = {
-    "city":          ("LOWER(city) = LOWER(?)",      str),
-    "country":       ("LOWER(country) = LOWER(?)",   str),
-    "min_rating":    ("avg_score >= ?",               float),
-    "max_rating":    ("avg_score <= ?",               float),
-    "min_reviews":   ("total_reviews >= ?",           int),
-    "price_min":     ("price_per_night >= ?",         int),
-    "price_max":     ("price_per_night <= ?",         int),
-    # amenity flags — value must be 0 or 1
-    "has_wifi":         ("has_wifi = ?",         int),
-    "has_pool":         ("has_pool = ?",         int),
-    "has_gym":          ("has_gym = ?",          int),
-    "has_sauna":        ("has_sauna = ?",        int),
-    "has_restaurant":   ("has_restaurant = ?",   int),
-    "has_room_service": ("has_room_service = ?", int),
-    "has_lounge":       ("has_lounge = ?",       int),
-    "has_event_space":  ("has_event_space = ?",  int),
+    "city":          ("LOWER(h.city) = LOWER(?)",      str),
+    "country":       ("LOWER(h.country) = LOWER(?)",   str),
+    "min_rating":    ("h.avg_score >= ?",               float),
+    "max_rating":    ("h.avg_score <= ?",               float),
+    "min_reviews":   ("h.total_reviews >= ?",           int),
+    "price_min":     ("h.price_per_night >= ?",         int),
+    "price_max":     ("h.price_per_night <= ?",         int),
+    "has_wifi":         ("h.has_wifi = ?",         int),
+    "has_pool":         ("h.has_pool = ?",         int),
+    "has_gym":          ("h.has_gym = ?",          int),
+    "has_sauna":        ("h.has_sauna = ?",        int),
+    "has_restaurant":   ("h.has_restaurant = ?",   int),
+    "has_room_service": ("h.has_room_service = ?", int),
+    "has_lounge":       ("h.has_lounge = ?",       int),
+    "has_event_space":  ("h.has_event_space = ?",  int),
 }
+
+# Separate filter map for the non-aspect (hotels-only) path with unaliased columns
+ALLOWED_FILTERS_PLAIN: dict[str, tuple[str, type]] = {
+    k: (v[0].replace("h.", ""), v[1])
+    for k, v in ALLOWED_FILTERS.items()
+}
+
+KNOWN_ASPECTS: frozenset[str] = frozenset({
+    "wifi", "pool", "gym", "sauna", "restaurant", "room_service", "lounge",
+    "staff", "cleanliness", "location", "room_comfort", "value", "noise", "breakfast",
+})
 
 
 def compile_query_spec(spec: QuerySpec) -> tuple[str, list]:
@@ -61,36 +75,82 @@ def compile_query_spec(spec: QuerySpec) -> tuple[str, list]:
             f"Unknown metric '{spec.metric}'. Allowed: {sorted(ALLOWED_METRICS)}"
         )
 
+    if spec.metric == "avg_sentiment" and not spec.aspect and spec.group_by != "aspect":
+        raise ValueError("metric 'avg_sentiment' requires an 'aspect' to be specified (or group_by='aspect')")
+
+    if spec.aspect and spec.aspect not in KNOWN_ASPECTS:
+        raise ValueError(
+            f"Unknown aspect '{spec.aspect}'. Allowed: {sorted(KNOWN_ASPECTS)}"
+        )
+
     if spec.group_by is not None and spec.group_by not in ALLOWED_GROUP_BY:
         raise ValueError(
             f"Unknown group_by '{spec.group_by}'. Allowed: {sorted(ALLOWED_GROUP_BY)}"
         )
 
+    uses_aspect_table = spec.metric == "avg_sentiment" or spec.group_by == "aspect"
     metric_expr = ALLOWED_METRICS[spec.metric]
     params: list = []
 
-    # ── SELECT ────────────────────────────────────────────────────────────────
-    if spec.group_by:
-        sql = f"SELECT {spec.group_by}, {metric_expr} AS value FROM hotels"
+    if uses_aspect_table:
+        # ── SELECT with aspect JOIN ───────────────────────────────────────────
+        group_col = spec.group_by if spec.group_by in ("city", "country", "aspect") else None
+
+        if group_col == "aspect":
+            sql = f"SELECT a.aspect, {metric_expr} AS value FROM hotels h JOIN hotel_aspect_sentiment a ON a.hotel_id = h.hotel_id"
+        elif group_col:
+            sql = f"SELECT h.{group_col}, {metric_expr} AS value FROM hotels h JOIN hotel_aspect_sentiment a ON a.hotel_id = h.hotel_id"
+        else:
+            sql = f"SELECT {metric_expr} AS value FROM hotels h JOIN hotel_aspect_sentiment a ON a.hotel_id = h.hotel_id"
+
+        # ── WHERE ─────────────────────────────────────────────────────────────
+        clauses: list[str] = []
+        if spec.aspect:
+            clauses.append("a.aspect = ?")
+            params.append(spec.aspect)
+
+        if spec.filters:
+            for key, val in spec.filters.items():
+                if key not in ALLOWED_FILTERS:
+                    raise ValueError(
+                        f"Unknown filter '{key}'. Allowed: {sorted(ALLOWED_FILTERS)}"
+                    )
+                fragment, cast = ALLOWED_FILTERS[key]
+                clauses.append(fragment)
+                params.append(cast(val))
+
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+
+        # ── GROUP BY ──────────────────────────────────────────────────────────
+        if group_col == "aspect":
+            sql += " GROUP BY a.aspect"
+        elif group_col:
+            sql += f" GROUP BY h.{group_col}"
+
     else:
-        sql = f"SELECT {metric_expr} AS value FROM hotels"
+        # ── SELECT hotels only (original path) ───────────────────────────────
+        if spec.group_by:
+            sql = f"SELECT {spec.group_by}, {metric_expr} AS value FROM hotels"
+        else:
+            sql = f"SELECT {metric_expr} AS value FROM hotels"
 
-    # ── WHERE ─────────────────────────────────────────────────────────────────
-    if spec.filters:
-        clauses = []
-        for key, val in spec.filters.items():
-            if key not in ALLOWED_FILTERS:
-                raise ValueError(
-                    f"Unknown filter '{key}'. Allowed: {sorted(ALLOWED_FILTERS)}"
-                )
-            fragment, cast = ALLOWED_FILTERS[key]
-            clauses.append(fragment)
-            params.append(cast(val))
-        sql += " WHERE " + " AND ".join(clauses)
+        # ── WHERE ─────────────────────────────────────────────────────────────
+        if spec.filters:
+            clauses = []
+            for key, val in spec.filters.items():
+                if key not in ALLOWED_FILTERS_PLAIN:
+                    raise ValueError(
+                        f"Unknown filter '{key}'. Allowed: {sorted(ALLOWED_FILTERS_PLAIN)}"
+                    )
+                fragment, cast = ALLOWED_FILTERS_PLAIN[key]
+                clauses.append(fragment)
+                params.append(cast(val))
+            sql += " WHERE " + " AND ".join(clauses)
 
-    # ── GROUP BY ──────────────────────────────────────────────────────────────
-    if spec.group_by:
-        sql += f" GROUP BY {spec.group_by}"
+        # ── GROUP BY ──────────────────────────────────────────────────────────
+        if spec.group_by:
+            sql += f" GROUP BY {spec.group_by}"
 
     # ── ORDER BY ──────────────────────────────────────────────────────────────
     order = (spec.sort_order or "desc").upper()

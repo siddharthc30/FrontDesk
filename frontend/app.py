@@ -17,7 +17,31 @@ import os
 import folium
 import requests
 import streamlit as st
+from geopy.geocoders import Nominatim
+from geopy.exc import GeocoderServiceError, GeocoderTimedOut
 from streamlit_folium import st_folium
+
+CITY_CENTERS: dict[str, tuple[float, float]] = {
+    "London":    (51.5074, -0.1278),
+    "Paris":     (48.8566,  2.3522),
+    "Barcelona": (41.3851,  2.1734),
+    "Milan":     (45.4642,  9.1900),
+    "Vienna":    (48.2082, 16.3738),
+    "Amsterdam": (52.3676,  4.9041),
+}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def geocode_address(address: str) -> tuple[float, float, dict] | None:
+    """Geocode `address` via Nominatim. Returns (lat, lng, address_components) or None."""
+    geolocator = Nominatim(user_agent="frontdesk-hotel-search")
+    try:
+        result = geolocator.geocode(address, addressdetails=True, timeout=10)
+    except (GeocoderServiceError, GeocoderTimedOut):
+        return None
+    if result is None:
+        return None
+    return result.latitude, result.longitude, result.raw.get("address", {})
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Hotel NL Search", layout="wide", page_icon="🏨")
@@ -71,21 +95,58 @@ question = st.text_input(
     placeholder='e.g. "Top 5 hotels in Paris", "How many hotels have a pool?", "Hotels near me with score above 8"',
 )
 
-col1, col2 = st.columns(2)
+col1, col2 = st.columns([1, 2])
 with col1:
-    user_lat = st.number_input(
-        "Your latitude (optional — for 'near me' queries)",
-        value=None,
-        format="%.6f",
+    city_options = ["None (no location)"] + list(CITY_CENTERS.keys())
+    selected_city_label = st.selectbox(
+        "City (optional — for 'near me' queries)",
+        options=city_options,
+        index=0,
     )
 with col2:
-    user_lng = st.number_input(
-        "Your longitude (optional)",
-        value=None,
-        format="%.6f",
+    address_input = st.text_input(
+        "Address in that city (optional — overrides city center)",
+        placeholder="e.g. 10 Downing Street",
     )
 
+selected_city = None if selected_city_label == "None (no location)" else selected_city_label
+
 search_clicked = st.button("🔍 Search", type="primary", disabled=not question)
+
+# ── Resolve user_lat / user_lng from city + address ────────────────────────────
+user_lat: float | None = None
+user_lng: float | None = None
+
+if search_clicked and question:
+    if selected_city is None:
+        if address_input.strip():
+            st.error("Please select a city before entering an address.")
+            st.stop()
+    else:
+        if not address_input.strip():
+            user_lat, user_lng = CITY_CENTERS[selected_city]
+        else:
+            geo = geocode_address(address_input.strip())
+            if geo is None:
+                st.error("Could not find that address — try a more specific one.")
+                st.stop()
+            lat, lng, components = geo
+            resolved_city = (
+                components.get("city")
+                or components.get("town")
+                or components.get("village")
+                or components.get("municipality")
+                or components.get("county")
+                or ""
+            )
+            if resolved_city.strip().lower() != selected_city.lower():
+                shown = resolved_city or "an unknown location"
+                st.error(
+                    f"That address resolves to **{shown}**, not **{selected_city}**. "
+                    f"Please enter an address in {selected_city}."
+                )
+                st.stop()
+            user_lat, user_lng = lat, lng
 
 # ── Search & streaming ─────────────────────────────────────────────────────────
 if search_clicked and question:
@@ -136,6 +197,26 @@ if search_clicked and question:
                 f"**I can't answer that:** {result_data.get('decline_reason', 'Unknown reason')}"
             )
         else:
+            import pandas as pd
+
+            path = result_data.get("path", "unknown")
+            confidence = result_data.get("confidence", "high")
+
+            # ── Confidence banner for non-high paths ──────────────────────────
+            if path == "review_search":
+                search_terms = []
+                query_ran_str = result_data.get("query_ran", "")
+                if "terms=" in query_ran_str:
+                    search_terms = query_ran_str.split("terms=")[-1]
+                st.info(
+                    f"**Results from searching guest reviews** for {search_terms}. "
+                    "Sentiment values are computed on the fly from matching reviews, "
+                    "not from precomputed scores. Mention counts indicate how many "
+                    "guests wrote about this topic."
+                )
+            elif confidence == "guarded":
+                st.warning("These results come from a generated SQL query and may be less reliable.")
+
             # Answer
             st.subheader("Answer")
             st.write(result_data.get("answer", ""))
@@ -151,25 +232,37 @@ if search_clicked and question:
             if hotels:
                 st.subheader(f"Hotels ({len(hotels)} result{'s' if len(hotels) != 1 else ''})")
 
-                # Clean up the dataframe: drop zero/null amenity/distance cols if unset
-                import pandas as pd
+                if path == "review_search":
+                    # Review-search results have a different shape
+                    rs_cols = ["name", "city", "country", "avg_score", "price_per_night",
+                               "mention_count", "pos_count", "neg_count", "sentiment"]
+                    rs_data = []
+                    for h in hotels:
+                        rs_data.append({c: h.get(c) for c in rs_cols if c in h})
+                    df = pd.DataFrame(rs_data)
+                    if "sentiment" in df.columns:
+                        df["sentiment"] = df["sentiment"].apply(
+                            lambda v: f"{v:.1%}" if v is not None else "—"
+                        )
+                    st.dataframe(df, use_container_width=True)
+                else:
+                    df = pd.DataFrame(hotels)
 
-                df = pd.DataFrame(hotels)
+                    # Drop columns that are entirely 0 / None (e.g. all amenities off)
+                    core_cols = {"hotel_id", "name", "city", "country", "avg_score",
+                                 "total_reviews", "latitude", "longitude", "address",
+                                 "price_per_night", "distance_km"}
+                    cols_to_drop = [
+                        c for c in df.columns
+                        if c not in core_cols and df[c].fillna(0).eq(0).all()
+                    ]
+                    df = df.drop(columns=cols_to_drop, errors="ignore")
 
-                # Drop columns that are entirely 0 / None (e.g. amenities all off)
-                cols_to_drop = [
-                    c for c in df.columns
-                    if c not in ("id", "name", "city", "country", "avg_score", "total_reviews",
-                                 "latitude", "longitude", "address", "price_per_night", "distance_km")
-                    and df[c].fillna(0).eq(0).all()
-                ]
-                df = df.drop(columns=cols_to_drop, errors="ignore")
+                    # Drop distance_km if all null (non-geo query)
+                    if "distance_km" in df.columns and df["distance_km"].isna().all():
+                        df = df.drop(columns=["distance_km"])
 
-                # Drop distance_km if all null (non-geo query)
-                if "distance_km" in df.columns and df["distance_km"].isna().all():
-                    df = df.drop(columns=["distance_km"])
-
-                st.dataframe(df, use_container_width=True)
+                    st.dataframe(df, use_container_width=True)
 
                 # ── Folium map ─────────────────────────────────────────────────
                 st.subheader("Map")
@@ -188,10 +281,17 @@ if search_clicked and question:
                         city  = h.get("city", "")
                         price = h.get("price_per_night")
                         price_str = f"<br>Price: ${price}/night" if price else ""
+                        # For review-search results, show mention count in popup
+                        extra = ""
+                        if path == "review_search":
+                            mentions = h.get("mention_count", 0)
+                            sentiment = h.get("sentiment")
+                            sent_str = f" ({sentiment:.0%} positive)" if sentiment is not None else ""
+                            extra = f"<br>Mentions: {mentions}{sent_str}"
                         popup_html = (
                             f"<b>{h['name']}</b><br>"
                             f"Score: {score}<br>"
-                            f"{city}{price_str}"
+                            f"{city}{price_str}{extra}"
                         )
                         folium.CircleMarker(
                             location=[h["latitude"], h["longitude"]],
@@ -210,9 +310,11 @@ if search_clicked and question:
         # ── Transparency expander ──────────────────────────────────────────────
         with st.expander("🔍 Query details (transparency)"):
             path = result_data.get("path", "unknown")
+            confidence = result_data.get("confidence", "high")
+            confidence_icon = {"high": "✅", "medium": "⚠️", "guarded": "🔶"}.get(confidence, "")
             st.write(f"**Path used:** `{path}`")
+            st.write(f"**Confidence:** {confidence_icon} `{confidence}`")
             query_ran = result_data.get("query_ran")
             if query_ran:
-                # Show as SQL if it looks like SQL, otherwise as plain text/JSON
-                lang = "sql" if query_ran.strip().upper().startswith("SELECT") else "json"
+                lang = "sql" if query_ran.strip().upper().startswith("SELECT") else "text"
                 st.code(query_ran, language=lang)

@@ -1,0 +1,194 @@
+<mxfile host="app.diagrams.net" modified="2026-05-27T00:00:00.000Z" agent="claude-code" version="24.0.0">
+  <diagram name="FrontDesk Architecture" id="frontdesk-arch">
+    <mxGraphModel dx="1700" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ───────────────── User ───────────────── -->
+        <mxCell id="user" value="User" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="540" y="40" width="160" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ───────────────── Frontend ───────────────── -->
+        <mxCell id="frontend" value="&lt;b&gt;frontend/app.py&lt;/b&gt;&lt;br/&gt;Streamlit UI&lt;br/&gt;text input · SSE consumer&lt;br/&gt;Folium map · results table" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;align=center" vertex="1" parent="1">
+          <mxGeometry x="440" y="140" width="360" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- ───────────────── API ───────────────── -->
+        <mxCell id="api" value="&lt;b&gt;api/main.py&lt;/b&gt;&lt;br/&gt;FastAPI (thin)&lt;br/&gt;GET /health · POST /ask (SSE)&lt;br/&gt;POST /ask/sync" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;align=center" vertex="1" parent="1">
+          <mxGeometry x="440" y="270" width="360" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- ───────────────── Pipeline ───────────────── -->
+        <mxCell id="pipeline" value="&lt;b&gt;core/pipeline.py&lt;/b&gt;&lt;br/&gt;ask() · ask_stream()&lt;br/&gt;Phase 4.5 orchestrator" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;align=center;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="320" y="400" width="600" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- ───────────────── Router ───────────────── -->
+        <mxCell id="router" value="&lt;b&gt;core/router.py&lt;/b&gt;&lt;br/&gt;route_question()&lt;br/&gt;1 LLM function call&lt;br/&gt;ROUTER_SYSTEM_PROMPT + tools" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;align=center" vertex="1" parent="1">
+          <mxGeometry x="80" y="520" width="280" height="110" as="geometry" />
+        </mxCell>
+
+        <!-- ───────────────── Narrate ───────────────── -->
+        <mxCell id="narrate" value="&lt;b&gt;core/narrate.py&lt;/b&gt;&lt;br/&gt;narrate_results()&lt;br/&gt;JSON-mode answer + insights&lt;br/&gt;grounded on rows only" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;align=center" vertex="1" parent="1">
+          <mxGeometry x="600" y="520" width="280" height="110" as="geometry" />
+        </mxCell>
+
+        <!-- ───────────────── Three execution paths ───────────────── -->
+        <mxCell id="search" value="&lt;b&gt;core/search.py&lt;/b&gt;&lt;br/&gt;parameterized&lt;br/&gt;SearchParams → SQL" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;align=center" vertex="1" parent="1">
+          <mxGeometry x="40" y="680" width="200" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="semantic" value="&lt;b&gt;core/semantic.py&lt;/b&gt;&lt;br/&gt;semantic&lt;br/&gt;QuerySpec → SQL&lt;br/&gt;(metric allowlists)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;align=center" vertex="1" parent="1">
+          <mxGeometry x="260" y="680" width="200" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="fallback" value="&lt;b&gt;core/fallback.py&lt;/b&gt;&lt;br/&gt;fallback (text-to-SQL)&lt;br/&gt;LLM SQL + sqlglot guard&lt;br/&gt;+1 retry" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;align=center" vertex="1" parent="1">
+          <mxGeometry x="480" y="680" width="220" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="declined" value="declined&lt;br/&gt;(decline_reason)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;align=center;dashed=1" vertex="1" parent="1">
+          <mxGeometry x="720" y="680" width="160" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- ───────────────── DB layer ───────────────── -->
+        <mxCell id="db" value="&lt;b&gt;core/db.py&lt;/b&gt;&lt;br/&gt;SQLite read-only connection&lt;br/&gt;haversine() UDF · data_dictionary()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;align=center" vertex="1" parent="1">
+          <mxGeometry x="200" y="820" width="500" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="hotelsdb" value="&lt;b&gt;data/hotels.db&lt;/b&gt;&lt;br/&gt;hotels (1,000 rows)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;align=center" vertex="1" parent="1">
+          <mxGeometry x="340" y="960" width="220" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- ───────────────── Side rail: LLM ───────────────── -->
+        <mxCell id="llm" value="&lt;b&gt;core/llm.py&lt;/b&gt;&lt;br/&gt;Gemini / OpenAI abstraction&lt;br/&gt;function_call · chat_completion&lt;br/&gt;call_llm" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;align=center" vertex="1" parent="1">
+          <mxGeometry x="1000" y="520" width="280" height="110" as="geometry" />
+        </mxCell>
+
+        <mxCell id="llmprov" value="&lt;b&gt;LLM provider&lt;/b&gt;&lt;br/&gt;Gemini 2.5 Flash (default)&lt;br/&gt;or OpenAI gpt-4.1-nano/mini" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;align=center" vertex="1" parent="1">
+          <mxGeometry x="1020" y="680" width="240" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- ───────────────── Side rail: Contracts ───────────────── -->
+        <mxCell id="models" value="&lt;b&gt;core/models.py&lt;/b&gt; (Pydantic contracts)&lt;br/&gt;━━━━━━━━━━━━━━━━━&lt;br/&gt;HotelRow&lt;br/&gt;SearchParams&lt;br/&gt;QuerySpec&lt;br/&gt;PipelineResponse" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;fontSize=11;align=left;verticalAlign=top;spacing=6" vertex="1" parent="1">
+          <mxGeometry x="1340" y="520" width="280" height="180" as="geometry" />
+        </mxCell>
+
+        <!-- ───────────────── Side rail: Observability ───────────────── -->
+        <mxCell id="obs" value="&lt;b&gt;core/observability.py&lt;/b&gt;&lt;br/&gt;@observe decorator" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;align=center" vertex="1" parent="1">
+          <mxGeometry x="1000" y="820" width="280" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="langfuse" value="&lt;b&gt;Langfuse&lt;/b&gt;&lt;br/&gt;(optional tracing)" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;align=center" vertex="1" parent="1">
+          <mxGeometry x="1340" y="820" width="220" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- ───────────────── Edges ───────────────── -->
+        <mxCell id="e_user_fe" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;startArrow=none;fontSize=11" edge="1" parent="1" source="user" target="frontend">
+          <mxGeometry relative="1" as="geometry" />
+          <mxCell value="NL question" style="text;" />
+        </mxCell>
+        <mxCell id="e_user_fe_lbl" value="NL question" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=10" vertex="1" connectable="0" parent="e_user_fe">
+          <mxGeometry x="0" relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_fe_api" value="HTTP / SSE" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10" edge="1" parent="1" source="frontend" target="api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_api_pipe" value="calls" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10" edge="1" parent="1" source="api" target="pipeline">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_pipe_router" value="route_question" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10" edge="1" parent="1" source="pipeline" target="router">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_pipe_narrate" value="narrate_results" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10" edge="1" parent="1" source="pipeline" target="narrate">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_router_search" value="parameterized" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10" edge="1" parent="1" source="router" target="search">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_router_semantic" value="semantic" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10" edge="1" parent="1" source="router" target="semantic">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_router_fallback" value="fallback" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10" edge="1" parent="1" source="router" target="fallback">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_router_declined" value="declined" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;dashed=1" edge="1" parent="1" source="router" target="declined">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_search_db" value="SQL" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10" edge="1" parent="1" source="search" target="db">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_semantic_db" value="SQL" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10" edge="1" parent="1" source="semantic" target="db">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_fallback_db" value="SQL (validated)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10" edge="1" parent="1" source="fallback" target="db">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_db_store" value="sqlite3 (RO)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10" edge="1" parent="1" source="db" target="hotelsdb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- LLM calls -->
+        <mxCell id="e_router_llm" value="function_call" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;strokeColor=#9673a6" edge="1" parent="1" source="router" target="llm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_fallback_llm" value="call_llm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;strokeColor=#9673a6" edge="1" parent="1" source="fallback" target="llm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_narrate_llm" value="chat_completion (JSON)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;strokeColor=#9673a6" edge="1" parent="1" source="narrate" target="llm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_llm_prov" value="HTTP API" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;strokeColor=#9673a6" edge="1" parent="1" source="llm" target="llmprov">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Contracts dotted references -->
+        <mxCell id="e_pipe_models" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;dashed=1;startArrow=none;fontSize=9;strokeColor=#666666" edge="1" parent="1" source="pipeline" target="models">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_search_models" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;dashed=1;startArrow=none;fontSize=9;strokeColor=#666666" edge="1" parent="1" source="search" target="models">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_semantic_models" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;dashed=1;startArrow=none;fontSize=9;strokeColor=#666666" edge="1" parent="1" source="semantic" target="models">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Observability dotted from each @observe call site -->
+        <mxCell id="e_pipe_obs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;dashed=1;startArrow=none;fontSize=9;strokeColor=#9673a6" edge="1" parent="1" source="pipeline" target="obs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_router_obs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;dashed=1;startArrow=none;fontSize=9;strokeColor=#9673a6" edge="1" parent="1" source="router" target="obs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_fallback_obs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;dashed=1;startArrow=none;fontSize=9;strokeColor=#9673a6" edge="1" parent="1" source="fallback" target="obs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_narrate_obs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;dashed=1;startArrow=none;fontSize=9;strokeColor=#9673a6" edge="1" parent="1" source="narrate" target="obs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_obs_lf" value="traces" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;fontSize=10;strokeColor=#9673a6" edge="1" parent="1" source="obs" target="langfuse">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ───────────────── Legend ───────────────── -->
+        <mxCell id="legend" value="&lt;b&gt;Legend&lt;/b&gt;&lt;br/&gt;━━━━━━━━━━━━━━━&lt;br/&gt;Blue = frontend  ·  Green = API&lt;br/&gt;Yellow = orchestrator  ·  Peach = core paths&lt;br/&gt;Red = data layer  ·  Purple = external / LLM&lt;br/&gt;Solid arrow = data flow&lt;br/&gt;Dashed grey = uses contract&lt;br/&gt;Dashed purple = @observe tracing" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fafafa;strokeColor=#999999;fontSize=10;align=left;verticalAlign=top;spacing=6" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="360" height="140" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

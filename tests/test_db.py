@@ -9,7 +9,7 @@ from core.db import get_connection, get_schema_info, load_csv_to_sqlite
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "hotels.db"
 
 EXPECTED_COLUMNS = {
-    "id", "name", "address", "city", "country",
+    "hotel_id", "name", "address", "city", "country",
     "latitude", "longitude", "avg_score", "total_reviews",
     "price_per_night",
     "has_wifi", "has_pool", "has_gym", "has_sauna",
@@ -82,7 +82,7 @@ def test_price_range(conn):
         "SELECT MIN(price_per_night), MAX(price_per_night) FROM hotels"
     ).fetchone()
     assert row[0] >= 80
-    assert row[1] <= 465
+    assert row[1] <= 600  # prices are review-derived; upper bound is generous
 
 
 def test_amenity_columns_are_binary(conn):

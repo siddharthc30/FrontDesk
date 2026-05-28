@@ -27,7 +27,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-app = FastAPI(title="Hotel NL Search", version="1.0.0")
+app = FastAPI(title="Hotel NL Search", version="2.0.0")
+
+
+@app.on_event("startup")
+def _startup():
+    """One-time FTS5 index setup on first launch."""
+    import os
+    from core.db import ensure_fts5
+    db_path = os.environ.get("DB_PATH", "data/hotels.db")
+    ensure_fts5(db_path)
 
 app.add_middleware(
     CORSMiddleware,

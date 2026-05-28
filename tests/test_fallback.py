@@ -90,8 +90,55 @@ def test_execute_valid_sql_returns_results(conn):
     assert len(rows) == 1
 
     row = dict(rows[0])
-    # Verify it's actually the hotel with the most reviews by checking against the DB
     max_reviews = conn.execute(
         "SELECT MAX(total_reviews) FROM hotels"
     ).fetchone()[0]
     assert row["total_reviews"] == max_reviews
+
+
+# ── Phase 7: new tables in fallback ──────────────────────────────────────────
+
+def test_valid_reviews_join_sql():
+    sql = (
+        "SELECT h.city, ROUND(AVG(h.avg_score), 2) AS hotel_avg_score, "
+        "ROUND(AVG(r.reviewer_score), 2) AS reviewer_avg_score "
+        "FROM hotels h JOIN reviews r ON r.hotel_id = h.hotel_id "
+        "GROUP BY h.city ORDER BY hotel_avg_score DESC"
+    )
+    valid, reason = validate_generated_sql(sql)
+    assert valid, reason
+
+
+def test_valid_aspect_sentiment_sql():
+    sql = (
+        "SELECT aspect, ROUND(AVG(sentiment), 3) AS avg_sentiment "
+        "FROM hotel_aspect_sentiment GROUP BY aspect ORDER BY avg_sentiment DESC"
+    )
+    valid, reason = validate_generated_sql(sql)
+    assert valid, reason
+
+
+def test_valid_most_reviews_by_hotel():
+    sql = "SELECT hotel_id, name, total_reviews FROM hotels ORDER BY total_reviews DESC LIMIT 10"
+    valid, reason = validate_generated_sql(sql)
+    assert valid, reason
+
+
+def test_reject_reviews_unknown_column():
+    valid, reason = validate_generated_sql(
+        "SELECT unknown_col FROM reviews LIMIT 5"
+    )
+    assert not valid
+
+
+def test_execute_aspect_sentiment_query(conn):
+    sql = (
+        "SELECT aspect, ROUND(AVG(sentiment), 3) AS avg_sentiment "
+        "FROM hotel_aspect_sentiment GROUP BY aspect ORDER BY avg_sentiment DESC"
+    )
+    valid, _ = validate_generated_sql(sql)
+    assert valid
+    rows = conn.execute(sql).fetchall()
+    assert len(rows) > 0
+    aspects = [dict(r)["aspect"] for r in rows]
+    assert "staff" in aspects or "location" in aspects

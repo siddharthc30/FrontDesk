@@ -15,21 +15,42 @@ logger = logging.getLogger(__name__)
 
 from core.observability import observe as _observe
 
+# Typical aspect sentiment ranges — used to calibrate framing so "0.85 staff" isn't
+# called exceptional when the average is 0.82.
+ASPECT_TYPICAL_RANGES = {
+    "location":     0.90,
+    "staff":        0.82,
+    "cleanliness":  0.78,
+    "breakfast":    0.58,
+    "room_comfort": 0.56,
+    "noise":        0.51,
+    "value":        0.37,
+}
+
+_CONFIDENCE_LABELS = {
+    "parameterized": "high",
+    "semantic":      "high",
+    "review_search": "medium",
+    "fallback":      "guarded",
+    "declined":      "guarded",
+}
+
+
+def path_to_confidence(path: str) -> str:
+    return _CONFIDENCE_LABELS.get(path, "high")
+
 
 def _format_rows(rows: list[dict]) -> str:
     """Produce a compact text representation of query rows for the prompt."""
     if not rows:
         return "(no rows returned)"
 
-    # For aggregation results that have a single value key
     if len(rows) == 1 and list(rows[0].keys()) == ["value"]:
         return f"Result: {rows[0]['value']}"
 
-    # Truncate to first 15 rows when there are many
     display = rows[:15]
     suffix = f"\n... and {len(rows) - 15} more rows" if len(rows) > 15 else ""
 
-    # Build a plain text table
     if not display:
         return "(no rows)"
 
@@ -45,6 +66,40 @@ def _format_rows(rows: list[dict]) -> str:
     return "\n".join(lines) + suffix
 
 
+def _build_context_note(path: str, query_ran: str | None) -> str:
+    """Build path-specific context note for the narration prompt."""
+    if path == "review_search":
+        terms = ""
+        if query_ran and "terms=" in query_ran:
+            terms = query_ran.split("terms=")[-1]
+        return (
+            f"NOTE: These results come from searching guest review text for {terms}. "
+            "This is an ad-hoc search — sentiment values are computed from this search, "
+            "not from precomputed scores. Mention counts indicate how many guests wrote "
+            "about this topic. Do NOT present these as authoritative scores. "
+            "Use phrasing like 'Based on searching guest reviews for ...' "
+            "and cite mention counts (e.g. 'N guests mentioned this')."
+        )
+    if path == "fallback":
+        return (
+            "NOTE: This answer comes from a generated SQL query. "
+            "It may be less reliable than structured queries. "
+            "If results seem unexpected, acknowledge uncertainty."
+        )
+    if path in ("parameterized", "semantic"):
+        aspect_note = ""
+        aspect_ranges_text = ", ".join(
+            f"{a}≈{v:.0%}" for a, v in ASPECT_TYPICAL_RANGES.items()
+        )
+        aspect_note = (
+            f"NOTE: Typical aspect sentiment benchmarks: {aspect_ranges_text}. "
+            "Calibrate your language accordingly — don't call 0.85 staff sentiment "
+            "'exceptional' when the typical range is 0.82."
+        )
+        return aspect_note
+    return ""
+
+
 NARRATION_SYSTEM_PROMPT = (
     "You are a helpful assistant that summarises hotel search results. "
     "Answer the user's question using ONLY the data provided below. "
@@ -52,7 +107,6 @@ NARRATION_SYSTEM_PROMPT = (
     "Be concise and specific."
 )
 
-# JSON schema for the narration response (OpenAI-style; Gemini converts internally).
 _NARRATION_JSON_SCHEMA: dict = {
     "type": "object",
     "properties": {
@@ -79,6 +133,7 @@ async def narrate_results(
 
     n = len(rows)
     formatted = _format_rows(rows)
+    context_note = _build_context_note(path, query_ran)
 
     empty_note = "No rows were returned for this query." if n == 0 else ""
 
@@ -86,11 +141,27 @@ async def narrate_results(
         f"USER QUESTION: {question}\n\n"
         f"QUERY RESULTS ({n} rows):\n{formatted}\n"
         + (f"\nNOTE: {empty_note}\n" if empty_note else "")
+        + (f"\n{context_note}\n" if context_note else "")
         + "\nRespond in JSON with exactly two fields:\n"
-        '- "answer": A direct, concise answer to the user\'s question (1–3 sentences).\n'
-        '- "insights": 1–3 additional observations from the data that might interest '
-        "the user. Each insight must reference specific values from the results. "
-        "If there are no results, set insights to an empty string.\n\n"
+        '- "answer": A direct, concise answer to the user\'s question (1–3 sentences). '
+        "Synthesize and interpret — don't list hotel names and scores, since the user "
+        "already sees the full results table below your answer. Focus on what the results "
+        "MEAN for their question.\n"
+        '- "insights": 1–3 observations that go BEYOND what\'s obvious from scanning the '
+        "results table. Good insights include: patterns or trends across results "
+        "(e.g. 'all three are clustered in the Gothic Quarter — this neighbourhood dominates "
+        "for high-rated stays'); standout review highlights when review data is present "
+        "(e.g. 'guests specifically praise the rooftop pool views and natural light'); "
+        "trade-offs worth noting (e.g. 'Hotel X is closest but also the priciest — Hotel Y "
+        "offers similar amenities for £20 less per night'); or honest caveats about what the "
+        "data can or can't confirm. "
+        "Do NOT restate name, score, price, distance, or amenity values that are already "
+        "visible in the results table — the user can read those themselves. Never just echo "
+        "column values. If there are no results, set insights to an empty string.\n\n"
+        "If review text or review summaries are included in the results, prioritise weaving "
+        "specific guest feedback into both the answer and insights. Review content is the "
+        "most valuable thing you can surface because the user cannot easily scan hundreds of "
+        "review snippets the way they can scan a table of scores and prices.\n\n"
         "If no results were returned, say so honestly. Do not make up hotels or scores."
     )
 
@@ -112,7 +183,6 @@ async def narrate_results(
 
     except Exception as exc:  # noqa: BLE001
         logger.warning("Narration JSON parse/call failed: %s", exc)
-        # Graceful fallback — never crash
         if n == 0:
             return "No hotels matched your criteria.", ""
         return f"Found {n} result(s) for your query.", ""

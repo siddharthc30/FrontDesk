@@ -220,3 +220,15 @@ __marimo__/
 # Raw data
 Hotel_Reviews.csv
 Hotel_Reviews.csv.zip
+
+# Archives (raw downloads / dumps)
+*.zip
+
+# Large generated data (exceed GitHub's 100 MB limit; rebuild locally with scripts/)
+data/hotels.db
+data/reviews.csv
+hotels.db
+
+# macOS
+.DS_Store
+**/.DS_Store

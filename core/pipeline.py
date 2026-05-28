@@ -16,9 +16,10 @@ from typing import Any
 from core.db import get_connection
 from core.fallback import FallbackError, execute_fallback
 from core.models import HotelRow, PipelineResponse, QuerySpec, SearchParams
-from core.narrate import narrate_results
+from core.narrate import narrate_results, path_to_confidence
 from core.observability import observe as _observe
-from core.router import route_question
+from core.review_search import search_reviews_conn
+from core.router import ReviewSearchParams, route_question
 from core.search import search_hotels
 from core.semantic import compile_query_spec, execute_semantic_query
 
@@ -34,7 +35,7 @@ def _build_final_hotels(path: str, hotel_rows: list[HotelRow], rows: list[dict])
     # fallback / semantic: try to cast rows that have the required fields
     final: list[HotelRow] = []
     for r in rows:
-        if "id" in r and "latitude" in r and "longitude" in r:
+        if "hotel_id" in r and "latitude" in r and "longitude" in r:
             try:
                 final.append(HotelRow(**r))
             except Exception:  # noqa: BLE001
@@ -46,6 +47,7 @@ def _path_label(path: str) -> str:
     labels = {
         "parameterized": "parameterized (filter/sort)",
         "semantic":      "semantic (aggregate/count)",
+        "review_search": "review_search (guest review text)",
         "fallback":      "fallback (SQL generation)",
     }
     return labels.get(path, path)
@@ -111,6 +113,17 @@ async def ask_stream(
             rows = execute_semantic_query(path_input, conn)
             query_ran = sql
 
+        elif path == "review_search":
+            assert isinstance(path_input, ReviewSearchParams)
+            rows = search_reviews_conn(
+                path_input.search_terms,
+                conn,
+                city=path_input.city,
+                min_rating=path_input.min_rating,
+                limit=path_input.limit,
+            )
+            query_ran = f"review_search terms={path_input.search_terms}"
+
         elif path == "fallback":
             rows, query_ran = await execute_fallback(question, conn)
 
@@ -138,6 +151,7 @@ async def ask_stream(
             insights=insights,
             hotels=final_hotels,
             path=path,
+            confidence=path_to_confidence(path),
             query_ran=query_ran,
         ))
 
@@ -148,6 +162,7 @@ async def ask_stream(
             insights="",
             hotels=[],
             path="fallback",
+            confidence="guarded",
             declined=True,
             decline_reason=str(exc),
         ))

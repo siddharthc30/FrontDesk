@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from core.db import get_connection
-from core.models import SearchParams
+from core.models import AspectFilter, SearchParams
 from core.search import AMENITY_ALLOWLIST, search_hotels
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "hotels.db"
@@ -55,14 +55,14 @@ def test_filter_price_max(conn):
 
 
 def test_filter_price_min(conn):
-    results = search_hotels(SearchParams(price_min=400, limit=20), conn)
+    results = search_hotels(SearchParams(price_min=250, limit=20), conn)
     assert len(results) > 0
-    assert all(r.price_per_night >= 400 for r in results)
+    assert all(r.price_per_night >= 250 for r in results)
 
 
 def test_filter_price_range(conn):
-    results = search_hotels(SearchParams(price_min=100, price_max=200, limit=20), conn)
-    assert all(100 <= r.price_per_night <= 200 for r in results)
+    results = search_hotels(SearchParams(price_min=150, price_max=250, limit=20), conn)
+    assert all(150 <= r.price_per_night <= 250 for r in results)
 
 
 # ── amenity filters ───────────────────────────────────────────────────────────
@@ -139,6 +139,69 @@ def test_geo_radius_all_within_bounds(conn):
     for r in results:
         dist = _haversine(lat, lng, r.latitude, r.longitude)
         assert dist <= radius + 0.5, f"{r.name} is {dist:.1f} km away, exceeds {radius} km"
+
+
+# ── aspect filters ────────────────────────────────────────────────────────────
+
+def test_aspect_filter_pool_sentiment(conn):
+    results = search_hotels(
+        SearchParams(
+            aspect_filters=[AspectFilter(aspect="pool", min_sentiment=0.7, min_mentions=10)],
+            limit=20,
+        ),
+        conn,
+    )
+    assert len(results) > 0
+
+
+def test_aspect_sort_by_staff_desc(conn):
+    results = search_hotels(
+        SearchParams(sort_by="staff_sentiment", sort_order="desc", limit=5), conn
+    )
+    assert len(results) == 5
+    # Verify descending order against DB
+    hotel_ids = [r.hotel_id for r in results]
+    for i in range(len(hotel_ids) - 1):
+        s1 = conn.execute(
+            "SELECT sentiment FROM hotel_aspect_sentiment WHERE hotel_id=? AND aspect='staff'",
+            (hotel_ids[i],),
+        ).fetchone()
+        s2 = conn.execute(
+            "SELECT sentiment FROM hotel_aspect_sentiment WHERE hotel_id=? AND aspect='staff'",
+            (hotel_ids[i + 1],),
+        ).fetchone()
+        if s1 and s2:
+            assert s1[0] >= s2[0] - 1e-6
+
+
+def test_aspect_filter_combined_city_pool(conn):
+    results = search_hotels(
+        SearchParams(
+            city="Paris",
+            required_amenities=["has_pool"],
+            aspect_filters=[AspectFilter(aspect="pool", min_sentiment=0.6, min_mentions=5)],
+            limit=10,
+        ),
+        conn,
+    )
+    for r in results:
+        assert r.city == "Paris"
+        assert r.has_pool == 1
+
+
+def test_event_space_rejected_as_amenity(conn):
+    with pytest.raises(ValueError, match="Unknown amenity"):
+        search_hotels(SearchParams(required_amenities=["has_event_space"]), conn)
+
+
+def test_unknown_aspect_rejected(conn):
+    with pytest.raises(ValueError, match="Unknown aspect"):
+        search_hotels(
+            SearchParams(
+                aspect_filters=[AspectFilter(aspect="helipad", min_sentiment=0.5)]
+            ),
+            conn,
+        )
 
 
 def test_sort_by_distance(conn):

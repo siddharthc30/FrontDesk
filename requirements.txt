@@ -8,6 +8,7 @@ sse-starlette
 streamlit
 folium
 streamlit-folium
+geopy
 requests
 python-dotenv
 pytest

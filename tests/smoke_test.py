@@ -2,7 +2,7 @@
 from core.db import get_connection, get_data_dictionary, get_schema_info
 
 EXPECTED_COLUMNS = {
-    "id", "name", "address", "city", "country",
+    "hotel_id", "name", "address", "city", "country",
     "latitude", "longitude", "avg_score", "total_reviews",
     "price_per_night",
     "has_wifi", "has_pool", "has_gym", "has_sauna",
