@@ -55,13 +55,45 @@ DATABASE SCHEMA:
 
 {_ASPECT_TAXONOMY_TEXT}
 
+RESOLVING DEICTIC REFERENCES (read carefully):
+
+The user's request may be preceded by a [User context: ...] line containing
+some or all of: city="<name>", lat=<float>, lng=<float>. Use it as follows:
+
+- CITY-SCOPE DEICTICS — phrases like "my city", "this city", "in this city",
+  "in town", "here", "around here", "locally" — refer to the user_city from
+  [User context]. Substitute it as the `city` parameter (search_hotels) or
+  a `city` filter (semantic_query). Do NOT use radius_km for these phrases;
+  they mean city-scope, not proximity. Do NOT try to reverse-geocode lat/lng
+  into a city — only use the explicit user_city string.
+
+- PROXIMITY DEICTICS — phrases like "near me", "close to me", "within X km",
+  "walking distance", "nearby" — refer to the user_lat/user_lng from
+  [User context]. Pass them as user_lat/user_lng + radius_km. Do NOT also
+  apply the user_city as a filter for these phrases.
+
+- If a city-scope deictic is present but user_city is NOT in [User context],
+  call `decline` with reason "Please select a city to use 'my city' (or
+  similar). I don't know which city you mean." Do not silently drop the
+  constraint. Do not infer a city from lat/lng.
+
+- If a proximity deictic is present but lat/lng are NOT in [User context],
+  call `decline` with reason "Please select a city so I know where 'near
+  me' is."
+
 ROUTING RULES (follow in order):
 
 1. If the question asks to FIND, LIST, SHOW, or SEARCH for specific hotels with filters
    (city, rating, price, amenities, or KNOWN aspects listed above) → call `search_hotels`.
    Examples:
    - "top 5 hotels in Paris" → search_hotels(city="Paris", limit=5)
-   - "hotels near me with score above 8" → search_hotels(min_rating=8.0, user_lat=..., user_lng=...)
+   - "hotels with pool in my city" + [User context: city="Paris"] →
+     search_hotels(city="Paris", required_amenities=["has_pool"])  (no radius_km)
+   - "hotels near me" + [User context: lat=48.85, lng=2.35] →
+     search_hotels(user_lat=48.85, user_lng=2.35, radius_km=5)  (no city filter)
+   - "hotels in my city" with NO user_city in [User context] →
+     decline(reason="Please select a city to use 'my city'.")
+   - "hotels near me with score above 8" → search_hotels(min_rating=8.0, user_lat=..., user_lng=..., radius_km=...)
    - "best hotels with great staff" → search_hotels(aspect_filters=[{{aspect:"staff", min_sentiment:0.75}}])
    - "hotels with a pool in Barcelona sorted by pool sentiment" → search_hotels(city="Barcelona", required_amenities=["has_pool"], sort_by="pool_sentiment")
    - "best value hotels in London" → search_hotels(city="London", sort_by="value_sentiment")
@@ -284,6 +316,7 @@ async def route_question(
     question: str,
     user_lat: float | None = None,
     user_lng: float | None = None,
+    user_city: str | None = None,
 ) -> tuple[str, SearchParams | QuerySpec | ReviewSearchParams | str | None]:
     """Route a natural-language question to the correct execution path.
 
@@ -292,9 +325,16 @@ async def route_question(
     """
     from core.llm import function_call  # deferred to keep module importable without LLM setup
 
-    question_with_context = question
+    ctx_parts: list[str] = []
+    if user_city:
+        ctx_parts.append(f'city="{user_city}"')
     if user_lat is not None and user_lng is not None:
-        question_with_context += f" [User location: lat={user_lat}, lng={user_lng}]"
+        ctx_parts.append(f"lat={user_lat}")
+        ctx_parts.append(f"lng={user_lng}")
+
+    question_with_context = question
+    if ctx_parts:
+        question_with_context += f" [User context: {', '.join(ctx_parts)}]"
 
     try:
         fn_name, fn_args = await function_call(

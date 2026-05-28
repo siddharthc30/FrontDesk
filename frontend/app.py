@@ -79,6 +79,7 @@ def stream_question(
     question: str,
     user_lat: float | None,
     user_lng: float | None,
+    user_city: str | None,
     api_url: str,
     voice: bool = False,
 ):
@@ -89,6 +90,7 @@ def stream_question(
             "question": question,
             "user_lat": user_lat,
             "user_lng": user_lng,
+            "user_city": user_city,
             "voice": voice,
         },
         stream=True,
@@ -131,6 +133,7 @@ if not voice_mode:
 question: str = ""
 user_lat: float | None = None
 user_lng: float | None = None
+selected_city: str | None = None
 search_clicked: bool = False
 
 if not voice_mode:
@@ -289,6 +292,7 @@ if search_clicked and question:
                 question,
                 float(user_lat) if user_lat is not None else None,
                 float(user_lng) if user_lng is not None else None,
+                selected_city,
                 API_URL,
                 voice=voice_mode,
             ):

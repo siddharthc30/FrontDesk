@@ -60,6 +60,7 @@ async def ask_stream(
     question: str,
     user_lat: float | None = None,
     user_lng: float | None = None,
+    user_city: str | None = None,
     db_path: str = "data/hotels.db",
 ) -> AsyncIterator[tuple[str, Any]]:
     """Async generator yielding (event_type, data) tuples.
@@ -74,7 +75,7 @@ async def ask_stream(
         # ── 1. Route ──────────────────────────────────────────────────────────
         yield ("step", {"step": "routing", "message": "🔍 Analyzing your question..."})
 
-        path, path_input = await route_question(question, user_lat, user_lng)
+        path, path_input = await route_question(question, user_lat, user_lng, user_city)
 
         if path == "declined":
             reason = str(path_input or "Cannot answer from available data.")
@@ -183,6 +184,7 @@ async def ask(
     question: str,
     user_lat: float | None = None,
     user_lng: float | None = None,
+    user_city: str | None = None,
     db_path: str = "data/hotels.db",
 ) -> PipelineResponse:
     """Full pipeline: route → execute → narrate.
@@ -193,7 +195,7 @@ async def ask(
     last_result: PipelineResponse | None = None
 
     try:
-        async for event_type, data in ask_stream(question, user_lat, user_lng, db_path):
+        async for event_type, data in ask_stream(question, user_lat, user_lng, user_city, db_path):
             if event_type == "result":
                 last_result = data
             elif event_type == "error":

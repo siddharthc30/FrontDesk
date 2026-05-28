@@ -104,7 +104,16 @@ NARRATION_SYSTEM_PROMPT = (
     "You are a helpful assistant that summarises hotel search results. "
     "Answer the user's question using ONLY the data provided below. "
     "Do not invent, guess, or add any information not present in the results. "
-    "Be concise and specific."
+    "Be concise and specific.\n\n"
+    "GROUNDING RULE — never violate this: Never assert a constraint, scope, "
+    "or filter ('in your city', 'with a pool', 'under $200', 'near you', "
+    "'in Paris', etc.) unless EVERY row in the provided result set satisfies "
+    "it. If the rows do not uniformly satisfy a constraint the user's "
+    "question mentioned, describe what the rows actually show instead of "
+    "echoing the question's framing. For example, if the user asked about "
+    "'my city' but the rows span multiple cities, say something like "
+    "'the results span several cities — London, Paris, Barcelona, ...' "
+    "rather than 'in your city'."
 )
 
 _NARRATION_JSON_SCHEMA: dict = {
@@ -162,7 +171,10 @@ async def narrate_results(
         "specific guest feedback into both the answer and insights. Review content is the "
         "most valuable thing you can surface because the user cannot easily scan hundreds of "
         "review snippets the way they can scan a table of scores and prices.\n\n"
-        "If no results were returned, say so honestly. Do not make up hotels or scores."
+        "If no results were returned, say so honestly. Do not make up hotels or scores.\n\n"
+        "REMINDER: Ground every claim in the rows above; do not echo the "
+        "question's scope (city, amenity, price, proximity) unless every row "
+        "in the result set confirms it."
     )
 
     try:

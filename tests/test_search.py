@@ -91,6 +91,16 @@ def test_filter_amenity_and_city(conn):
     assert all(r.has_restaurant == 1 for r in results)
 
 
+def test_city_paris_with_pool_returns_only_paris(conn):
+    """Regression: 'hotels with pool in my city' (Paris) must not bleed other cities."""
+    results = search_hotels(
+        SearchParams(city="Paris", required_amenities=["has_pool"], limit=50), conn
+    )
+    assert len(results) > 0
+    assert all(r.city == "Paris" for r in results)
+    assert all(r.has_pool == 1 for r in results)
+
+
 def test_invalid_amenity_raises(conn):
     with pytest.raises(ValueError, match="Unknown amenity"):
         search_hotels(SearchParams(required_amenities=["has_jacuzzi"]), conn)

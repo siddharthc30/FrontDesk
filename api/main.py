@@ -121,6 +121,7 @@ class QuestionRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
     user_lat: Optional[float] = None
     user_lng: Optional[float] = None
+    user_city: Optional[str] = Field(default=None, max_length=80)
     voice: bool = False   # when True, response includes base64 MP3 audio
 
 
@@ -175,7 +176,7 @@ async def ask_endpoint(request: Request, req: QuestionRequest, _auth: None = Non
     async def event_generator():
         try:
             async for event_type, data in ask_stream(
-                req.question, req.user_lat, req.user_lng
+                req.question, req.user_lat, req.user_lng, req.user_city
             ):
                 if event_type == "step":
                     yield {"event": "step", "data": json.dumps(data)}
@@ -205,7 +206,7 @@ async def ask_sync_endpoint(request: Request, req: QuestionRequest):
     from core.pipeline import ask  # imported here → core stays FastAPI-free
 
     try:
-        result = await ask(req.question, req.user_lat, req.user_lng)
+        result = await ask(req.question, req.user_lat, req.user_lng, req.user_city)
     except Exception:  # noqa: BLE001
         logger.exception("Unhandled exception in /ask/sync")
         raise HTTPException(status_code=500, detail="An unexpected error occurred.")
