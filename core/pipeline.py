@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from core.db import get_connection
+from core.deictic import resolve_deictic_city
 from core.fallback import FallbackError, execute_fallback
 from core.models import HotelRow, PipelineResponse, QuerySpec, SearchParams
 from core.narrate import narrate_results, path_to_confidence
@@ -72,10 +73,34 @@ async def ask_stream(
     """
     conn = get_connection(db_path)
     try:
-        # ── 1. Route ──────────────────────────────────────────────────────────
+        # ── 1. Resolve deictic city references deterministically ─────────────
+        # ("my city", "this city", "here", ...). Mirrors the working voice-mode
+        # case (where the speaker names the city literally) by substituting the
+        # selected city into the text before the router LLM sees it. Done in
+        # code, not in the prompt, because LLM-side resolution is unreliable.
+        resolution = resolve_deictic_city(question, user_city)
+        if resolution.decline_reason is not None:
+            yield ("step", {"step": "declined", "message": f"❌ Cannot answer: {resolution.decline_reason}"})
+            yield ("result", PipelineResponse(
+                answer=f"I can't answer that: {resolution.decline_reason}",
+                insights="",
+                hotels=[],
+                path="declined",
+                declined=True,
+                decline_reason=resolution.decline_reason,
+            ))
+            return
+        effective_question = resolution.question
+        if resolution.rewritten:
+            yield ("step", {
+                "step": "resolving",
+                "message": f"📍 Resolved 'my city' → **{user_city}**",
+            })
+
+        # ── 2. Route ──────────────────────────────────────────────────────────
         yield ("step", {"step": "routing", "message": "🔍 Analyzing your question..."})
 
-        path, path_input = await route_question(question, user_lat, user_lng, user_city)
+        path, path_input = await route_question(effective_question, user_lat, user_lng, user_city)
 
         if path == "declined":
             reason = str(path_input or "Cannot answer from available data.")
@@ -126,7 +151,7 @@ async def ask_stream(
             query_ran = f"review_search terms={path_input.search_terms}"
 
         elif path == "fallback":
-            rows, query_ran = await execute_fallback(question, conn)
+            rows, query_ran = await execute_fallback(effective_question, conn)
 
         else:
             yield ("result", PipelineResponse(
@@ -143,7 +168,7 @@ async def ask_stream(
         n = len(rows)
         yield ("step", {"step": "narrating", "message": f"✍️ Generating answer from {n} result(s)..."})
 
-        answer, insights = await narrate_results(question, rows, path, query_ran)
+        answer, insights = await narrate_results(effective_question, rows, path, query_ran)
 
         # ── 4. Yield final result ─────────────────────────────────────────────
         final_hotels = _build_final_hotels(path, hotel_rows, rows)
