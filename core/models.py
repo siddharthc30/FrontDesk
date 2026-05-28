@@ -76,4 +76,3 @@ class PipelineResponse(BaseModel):
     query_ran: Optional[str] = None      # the SQL or query-spec that produced the result
     declined: bool = False
     decline_reason: Optional[str] = None
-    audio_b64: Optional[str] = None      # base64-encoded MP3 audio of the answer (voice=True only)

@@ -55,6 +55,11 @@ RATE_LIMIT_STT = os.environ.get("RATE_LIMIT_STT", "10/minute")
 # Cap STT payload size to prevent DoS (base64-encoded audio).
 MAX_STT_PAYLOAD_BYTES = int(os.environ.get("MAX_STT_PAYLOAD_BYTES", str(5 * 1024 * 1024)))
 
+# Cap TTS input length so a single request can't run up unbounded provider cost.
+MAX_TTS_TEXT_CHARS = int(os.environ.get("MAX_TTS_TEXT_CHARS", "2000"))
+
+RATE_LIMIT_TTS = os.environ.get("RATE_LIMIT_TTS", "20/minute")
+
 
 # ── App + middleware ──────────────────────────────────────────────────────────
 
@@ -130,26 +135,8 @@ class TranscribeRequest(BaseModel):
     content_type: str = "audio/wav"
 
 
-# ── TTS helper ─────────────────────────────────────────────────────────────────
-
-def _attach_audio(result, answer: str, insights: str) -> object:
-    """Call TTS and return a copy of result with audio_b64 set (or unchanged on failure)."""
-    from core.tts import synthesize
-
-    tts_text = answer
-    if insights:
-        tts_text += "  " + insights
-
-    try:
-        audio_bytes = synthesize(tts_text)
-    except Exception:  # noqa: BLE001
-        logger.exception("TTS synthesis failed")
-        return result
-    if audio_bytes:
-        return result.model_copy(
-            update={"audio_b64": base64.b64encode(audio_bytes).decode()}
-        )
-    return result
+class TtsRequest(BaseModel):
+    text: str = Field(..., min_length=1)
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -181,8 +168,9 @@ async def ask_endpoint(request: Request, req: QuestionRequest, _auth: None = Non
                 if event_type == "step":
                     yield {"event": "step", "data": json.dumps(data)}
                 elif event_type == "result":
-                    if req.voice and not data.declined:
-                        data = _attach_audio(data, data.answer, data.insights)
+                    # Audio is fetched via POST /api/tts after the result
+                    # arrives — keeps the SSE event small so intermediate
+                    # proxies don't drop the large base64 payload.
                     yield {"event": "result", "data": data.model_dump_json()}
                 elif event_type == "error":
                     # data["message"] is already sanitised by core/pipeline.py
@@ -211,8 +199,9 @@ async def ask_sync_endpoint(request: Request, req: QuestionRequest):
         logger.exception("Unhandled exception in /ask/sync")
         raise HTTPException(status_code=500, detail="An unexpected error occurred.")
 
-    if req.voice and not result.declined:
-        result = _attach_audio(result, result.answer, result.insights)
+    # Voice clients fetch audio separately via POST /api/tts after receiving
+    # the result. Keeping audio out of this response avoids large-payload
+    # proxy issues on Streamlit Cloud / Render.
     return result
 
 
@@ -244,3 +233,37 @@ async def stt_endpoint(request: Request, req: TranscribeRequest):
     if text is None:
         return {"text": None, "error": "Transcription failed or STT not configured."}
     return {"text": text}
+
+
+@app.post("/api/tts")
+@limiter.limit(RATE_LIMIT_TTS)
+async def tts_endpoint(request: Request, req: TtsRequest):
+    """Server-side text-to-speech.
+
+    Side-channel endpoint: voice clients call this AFTER receiving the final
+    answer from /ask, instead of inlining audio in the SSE result event.
+    Keeps the SSE payload small so intermediate proxies (Streamlit Cloud /
+    Render / Cloudflare) don't drop the large base64 audio blob.
+    """
+    require_app_token(request.headers.get("X-App-Token"))
+
+    if len(req.text) > MAX_TTS_TEXT_CHARS:
+        raise HTTPException(status_code=413, detail="Text too long for TTS.")
+
+    from core.tts import synthesize
+
+    try:
+        audio_bytes = synthesize(req.text)
+    except Exception:  # noqa: BLE001
+        logger.exception("TTS synthesis crashed")
+        raise HTTPException(status_code=502, detail="TTS provider error.")
+
+    if not audio_bytes:
+        # synthesize() returns None when no key / unknown provider / non-fatal
+        # provider failure. Be explicit so the client can surface it.
+        raise HTTPException(
+            status_code=503,
+            detail="TTS is not configured or the provider returned no audio.",
+        )
+
+    return {"audio_b64": base64.b64encode(audio_bytes).decode()}

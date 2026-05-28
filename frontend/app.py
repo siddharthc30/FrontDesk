@@ -357,16 +357,38 @@ if search_clicked and question:
             st.subheader("Answer")
             st.write(result_data.get("answer", ""))
 
-            # Audio playback (voice mode only)
-            audio_b64 = result_data.get("audio_b64")
-            if audio_b64 and voice_mode:
-                st.audio(base64.b64decode(audio_b64), format="audio/mp3")
-
             # Insights
             insights = result_data.get("insights", "")
             if insights:
                 st.subheader("Insights")
                 st.write(insights)
+
+            # Audio playback (voice mode only) — fetched via side-channel
+            # /api/tts AFTER the result arrives, so the large base64 MP3
+            # blob doesn't have to travel inside an SSE event (proxies on
+            # Streamlit Cloud / Render were dropping it).
+            if voice_mode:
+                tts_text = result_data.get("answer", "")
+                if insights:
+                    tts_text = f"{tts_text}  {insights}" if tts_text else insights
+                if tts_text.strip():
+                    try:
+                        tts_resp = requests.post(
+                            f"{API_URL}/api/tts",
+                            json={"text": tts_text},
+                            timeout=60,
+                            headers=_auth_headers(),
+                        )
+                        tts_resp.raise_for_status()
+                        audio_b64 = tts_resp.json().get("audio_b64")
+                        if audio_b64:
+                            st.audio(base64.b64decode(audio_b64), format="audio/mp3")
+                        else:
+                            st.caption("🔇 Audio unavailable for this answer.")
+                    except requests.exceptions.HTTPError as exc:
+                        st.caption(f"🔇 Audio unavailable ({exc.response.status_code}).")
+                    except Exception as exc:  # noqa: BLE001
+                        st.caption(f"🔇 Audio unavailable: {exc}")
 
             # Hotels table + map
             hotels = result_data.get("hotels", [])
