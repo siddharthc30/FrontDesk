@@ -83,14 +83,22 @@ ROUTING RULES (follow in order):
    - "hotels with private beach access" → review_search(search_terms=["private beach"])
 
 4. If the question is answerable from the data but doesn't fit the above patterns
-   (complex conditions, name searches, unusual comparisons, OR/AND across amenities) →
+   (complex conditions, name searches, unusual comparisons, OR/AND across amenities,
+   OR questions about the database schema/structure) →
    call `text_to_sql` with a valid SELECT statement.
    Examples:
    - "hotels with 'Grand' in the name" → text_to_sql
    - "cheapest hotel with both a pool and a gym" → text_to_sql
+   - "how many columns are there in the hotel table?" → text_to_sql(sql="SELECT COUNT(*) AS column_count FROM pragma_table_info('hotels')")
+   - "what columns does the hotels table have?" → text_to_sql(sql="SELECT name FROM pragma_table_info('hotels')")
+   - "what data do you have on hotels?" → text_to_sql(sql="SELECT name FROM pragma_table_info('hotels')")
+   - "describe the hotel table" → text_to_sql(sql="SELECT name FROM pragma_table_info('hotels')")
+   - "what fields are in the database?" → text_to_sql(sql="SELECT name FROM pragma_table_info('hotels')")
+   - "show me the table structure" → text_to_sql(sql="SELECT name FROM pragma_table_info('hotels')")
 
 5. If the question CANNOT be answered from this data → call `decline` with a clear reason.
    MUST decline for: live availability, booking, check-in dates, photos.
+   Do NOT decline schema/metadata questions about the hotel table structure — those are answerable via text_to_sql (rule 4).
 
 IMPORTANT:
 - NEVER force-fit a question. If in doubt, decline with a reason rather than guess.

@@ -17,6 +17,7 @@ from core.db import get_data_dictionary
 
 ALLOWED_TABLES: frozenset[str] = frozenset({
     "hotels", "reviews", "hotel_aspect_sentiment",
+    "pragma_table_info",  # SQLite table-valued function for schema introspection
 })
 
 ALLOWED_COLUMNS: frozenset[str] = frozenset({
@@ -37,6 +38,8 @@ ALLOWED_COLUMNS: frozenset[str] = frozenset({
     "distance_km", "value", "count", "n", "avg_sentiment",
     "avg_score", "avg_price", "avg_reviews", "total",
     "hotel_avg_score", "reviewer_avg_score",
+    # pragma_table_info output columns
+    "cid", "type", "notnull", "dflt_value", "pk",
 })
 
 # Hardcoded few-shot examples — NOT generated; teach the model table/column names.
@@ -78,6 +81,12 @@ SQL: SELECT h.city, ROUND(AVG(h.avg_score), 2) AS hotel_avg_score, ROUND(AVG(r.r
 
 Q: "Which aspect has the highest average sentiment?"
 SQL: SELECT aspect, ROUND(AVG(sentiment), 3) AS avg_sentiment FROM hotel_aspect_sentiment GROUP BY aspect ORDER BY avg_sentiment DESC
+
+Q: "How many columns are there in the hotel table?"
+SQL: SELECT COUNT(*) AS count FROM pragma_table_info('hotels')
+
+Q: "What columns does the hotels table have?"
+SQL: SELECT name FROM pragma_table_info('hotels')
 """.strip()
 
 SYSTEM_INSTRUCTION = (
@@ -85,6 +94,8 @@ SYSTEM_INSTRUCTION = (
     "Available tables: hotels, reviews, hotel_aspect_sentiment. "
     "Use only the columns listed in the schema below. "
     "Join hotels and reviews on hotel_id. Join hotels and hotel_aspect_sentiment on hotel_id. "
+    "For questions about the database schema or table structure, use pragma_table_info('hotels') "
+    "— e.g. SELECT name, type FROM pragma_table_info('hotels'). "
     "Do not use INSERT, UPDATE, DELETE, DROP, ALTER, ATTACH, or PRAGMA. "
     "Return ONLY the SQL — no markdown fences, no explanation."
 )
@@ -122,8 +133,14 @@ def validate_generated_sql(sql: str) -> tuple[bool, str]:
             return False, f"Blocked statement type: {type(node).__name__}"
 
     for table in stmt.find_all(sqlglot_exp.Table):
-        if table.name.lower() not in ALLOWED_TABLES:
-            return False, f"Unknown table: {table.name}"
+        # Table-valued functions (e.g. pragma_table_info('hotels')) parse as
+        # Table(this=Anonymous(...)) — extract the function name in that case.
+        if isinstance(table.this, sqlglot_exp.Anonymous):
+            tbl_name = table.this.name.lower()
+        else:
+            tbl_name = table.name.lower()
+        if tbl_name not in ALLOWED_TABLES:
+            return False, f"Unknown table: {tbl_name}"
 
     for col in stmt.find_all(sqlglot_exp.Column):
         if col.name.lower() not in ALLOWED_COLUMNS:

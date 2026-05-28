@@ -15,3 +15,4 @@ pytest
 langfuse
 openinference-instrumentation-google-genai
 openinference-instrumentation-openai
+audio-recorder-streamlit

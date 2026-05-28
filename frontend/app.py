@@ -5,12 +5,16 @@ Consumes the FastAPI SSE stream and shows live progress steps while the
 pipeline runs.  Renders the final answer, insights, hotel table, and a
 Folium map.
 
+Voice mode (Phase 8c): mic button → server-side STT → results + audio playback.
+Text mode (default): existing question box + city/address fields.
+
 Run with:
   streamlit run frontend/app.py
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 
@@ -58,11 +62,17 @@ def stream_question(
     user_lat: float | None,
     user_lng: float | None,
     api_url: str,
+    voice: bool = False,
 ):
     """Yield (event_type, data_dict) tuples from the SSE stream."""
     resp = requests.post(
         f"{api_url}/ask",
-        json={"question": question, "user_lat": user_lat, "user_lng": user_lng},
+        json={
+            "question": question,
+            "user_lat": user_lat,
+            "user_lng": user_lng,
+            "voice": voice,
+        },
         stream=True,
         timeout=120,
         headers={"Accept": "text/event-stream"},
@@ -88,65 +98,167 @@ def stream_question(
                 data_buffer = ""
 
 
-# ── Input area ─────────────────────────────────────────────────────────────────
+# ── Mode toggle ────────────────────────────────────────────────────────────────
 st.markdown("---")
-question = st.text_input(
-    "Ask a question about hotels:",
-    placeholder='e.g. "Top 5 hotels in Paris", "How many hotels have a pool?", "Hotels near me with score above 8"',
-)
+voice_mode = st.toggle("🎙️ Voice mode", value=False, help="Speak your question instead of typing")
 
-col1, col2 = st.columns([1, 2])
-with col1:
-    city_options = ["None (no location)"] + list(CITY_CENTERS.keys())
-    selected_city_label = st.selectbox(
-        "City (optional — for 'near me' queries)",
-        options=city_options,
-        index=0,
-    )
-with col2:
-    address_input = st.text_input(
-        "Address in that city (optional — overrides city center)",
-        placeholder="e.g. 10 Downing Street",
-    )
+# Clear voice state when switching to text mode
+if not voice_mode:
+    for key in ("voice_audio_bytes", "voice_transcript", "voice_recorder_generation"):
+        st.session_state.pop(key, None)
 
-selected_city = None if selected_city_label == "None (no location)" else selected_city_label
 
-search_clicked = st.button("🔍 Search", type="primary", disabled=not question)
+# ── Input area ─────────────────────────────────────────────────────────────────
 
-# ── Resolve user_lat / user_lng from city + address ────────────────────────────
+question: str = ""
 user_lat: float | None = None
 user_lng: float | None = None
+search_clicked: bool = False
 
-if search_clicked and question:
-    if selected_city is None:
-        if address_input.strip():
-            st.error("Please select a city before entering an address.")
-            st.stop()
-    else:
-        if not address_input.strip():
-            user_lat, user_lng = CITY_CENTERS[selected_city]
-        else:
-            geo = geocode_address(address_input.strip())
-            if geo is None:
-                st.error("Could not find that address — try a more specific one.")
+if not voice_mode:
+    # ── Text mode (unchanged) ──────────────────────────────────────────────────
+    question = st.text_input(
+        "Ask a question about hotels:",
+        placeholder='e.g. "Top 5 hotels in Paris", "How many hotels have a pool?", "Hotels near me with score above 8"',
+    )
+
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        city_options = ["None (no location)"] + list(CITY_CENTERS.keys())
+        selected_city_label = st.selectbox(
+            "City (optional — for 'near me' queries)",
+            options=city_options,
+            index=0,
+        )
+    with col2:
+        address_input = st.text_input(
+            "Address in that city (optional — overrides city center)",
+            placeholder="e.g. 10 Downing Street",
+        )
+
+    selected_city = None if selected_city_label == "None (no location)" else selected_city_label
+    search_clicked = st.button("🔍 Search", type="primary", disabled=not question)
+
+    # ── Resolve user_lat / user_lng from city + address ───────────────────────
+    if search_clicked and question:
+        if selected_city is None:
+            if address_input.strip():
+                st.error("Please select a city before entering an address.")
                 st.stop()
-            lat, lng, components = geo
-            resolved_city = (
-                components.get("city")
-                or components.get("town")
-                or components.get("village")
-                or components.get("municipality")
-                or components.get("county")
-                or ""
-            )
-            if resolved_city.strip().lower() != selected_city.lower():
-                shown = resolved_city or "an unknown location"
+        else:
+            if not address_input.strip():
+                user_lat, user_lng = CITY_CENTERS[selected_city]
+            else:
+                geo = geocode_address(address_input.strip())
+                if geo is None:
+                    st.error("Could not find that address — try a more specific one.")
+                    st.stop()
+                lat, lng, components = geo
+                resolved_city = (
+                    components.get("city")
+                    or components.get("town")
+                    or components.get("village")
+                    or components.get("municipality")
+                    or components.get("county")
+                    or ""
+                )
+                if resolved_city.strip().lower() != selected_city.lower():
+                    shown = resolved_city or "an unknown location"
+                    st.error(
+                        f"That address resolves to **{shown}**, not **{selected_city}**. "
+                        f"Please enter an address in {selected_city}."
+                    )
+                    st.stop()
+                user_lat, user_lng = lat, lng
+
+else:
+    # ── Voice mode ─────────────────────────────────────────────────────────────
+    try:
+        from audio_recorder_streamlit import audio_recorder
+        _recorder_available = True
+    except ImportError:
+        _recorder_available = False
+
+    if not _recorder_available:
+        st.error(
+            "Voice mode requires `audio-recorder-streamlit`. "
+            "Run: `pip install audio-recorder-streamlit`"
+        )
+        st.stop()
+
+    st.markdown("### 🎙️ Speak your question")
+    st.caption(
+        "Tap the mic button and ask naturally — include the city, any filters, everything. "
+        "For example: *'What are the top 5 hotels in Paris with a pool and good breakfast?'*"
+    )
+
+    # The key must change when the user re-records so Streamlit mounts a fresh
+    # component instance (returning None) rather than replaying the old audio.
+    recorder_key = f"voice_input_{st.session_state.get('voice_recorder_generation', 0)}"
+    raw_audio = audio_recorder(
+        text="",
+        recording_color="#e8b62c",
+        neutral_color="#6aa36f",
+        icon_name="microphone",
+        icon_size="3x",
+        pause_threshold=2.0,
+        key=recorder_key,
+    )
+
+    # Detect new recording (ignore noise / empty clips)
+    if raw_audio is not None and len(raw_audio) > 1000:
+        if raw_audio != st.session_state.get("voice_audio_bytes"):
+            st.session_state["voice_audio_bytes"] = raw_audio
+            st.session_state.pop("voice_transcript", None)  # reset so we re-transcribe
+
+    # Transcribe if we have audio but no transcript yet
+    if st.session_state.get("voice_audio_bytes") and "voice_transcript" not in st.session_state:
+        with st.spinner("Transcribing your question..."):
+            encoded = base64.b64encode(st.session_state["voice_audio_bytes"]).decode()
+            try:
+                stt_resp = requests.post(
+                    f"{API_URL}/api/stt",
+                    json={"audio_b64": encoded, "content_type": "audio/wav"},
+                    timeout=30,
+                )
+                stt_resp.raise_for_status()
+                st.session_state["voice_transcript"] = stt_resp.json().get("text") or ""
+            except requests.exceptions.ConnectionError:
                 st.error(
-                    f"That address resolves to **{shown}**, not **{selected_city}**. "
-                    f"Please enter an address in {selected_city}."
+                    "⚠️ Could not connect to the API for transcription. "
+                    f"Make sure `uvicorn api.main:app --reload` is running at **{API_URL}**."
                 )
                 st.stop()
-            user_lat, user_lng = lat, lng
+            except Exception as exc:  # noqa: BLE001
+                st.warning(f"Transcription failed: {exc}. Please try recording again.")
+                st.session_state["voice_transcript"] = ""
+
+    transcript = st.session_state.get("voice_transcript")
+
+    if transcript:
+        st.info(f"**Heard:** {transcript}")
+        question = transcript
+        col_submit, col_retry = st.columns([1, 4])
+        with col_submit:
+            search_clicked = st.button("🔍 Search", type="primary", key="voice_search")
+        with col_retry:
+            if st.button("🔄 Re-record", key="voice_retry"):
+                st.session_state.pop("voice_audio_bytes", None)
+                st.session_state.pop("voice_transcript", None)
+                st.session_state["voice_recorder_generation"] = (
+                    st.session_state.get("voice_recorder_generation", 0) + 1
+                )
+                st.rerun()
+    elif transcript == "":
+        st.warning("Could not hear anything. Please tap the mic and try again.")
+        if st.button("🔄 Try again", key="voice_retry_empty"):
+            st.session_state.pop("voice_audio_bytes", None)
+            st.session_state.pop("voice_transcript", None)
+            st.session_state["voice_recorder_generation"] = (
+                st.session_state.get("voice_recorder_generation", 0) + 1
+            )
+            st.rerun()
+
 
 # ── Search & streaming ─────────────────────────────────────────────────────────
 if search_clicked and question:
@@ -159,6 +271,7 @@ if search_clicked and question:
                 float(user_lat) if user_lat is not None else None,
                 float(user_lng) if user_lng is not None else None,
                 API_URL,
+                voice=voice_mode,
             ):
                 if event_type == "step":
                     st.write(f"{data.get('message', '')}")
@@ -220,6 +333,11 @@ if search_clicked and question:
             # Answer
             st.subheader("Answer")
             st.write(result_data.get("answer", ""))
+
+            # Audio playback (voice mode only)
+            audio_b64 = result_data.get("audio_b64")
+            if audio_b64 and voice_mode:
+                st.audio(base64.b64decode(audio_b64), format="audio/mp3")
 
             # Insights
             insights = result_data.get("insights", "")
@@ -318,3 +436,8 @@ if search_clicked and question:
             if query_ran:
                 lang = "sql" if query_ran.strip().upper().startswith("SELECT") else "text"
                 st.code(query_ran, language=lang)
+
+    # After a voice search, clear the pending recording so mic is ready for next question
+    if voice_mode:
+        st.session_state.pop("voice_audio_bytes", None)
+        st.session_state.pop("voice_transcript", None)
