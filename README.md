@@ -178,8 +178,31 @@ curl -s -X POST http://localhost:8000/ask/sync \
 ## Deployment notes
 
 - **FastAPI** → deploy on [Render](https://render.com) free tier (`uvicorn api.main:app --host 0.0.0.0 --port $PORT`). Free tier sleeps after ~15 min idle; set up a cron job hitting `/health` to keep it warm.
-- **Streamlit** → deploy on [Streamlit Community Cloud](https://streamlit.io/cloud), pointed at the Render URL via the `API_URL` env var.
-- **CORS** → update `allow_origins` in `api/main.py` to your Streamlit Community Cloud URL before going to production.
+- **Streamlit** → deploy on [Streamlit Community Cloud](https://streamlit.io/cloud), pointed at the Render URL via the `API_URL` secret.
+
+### Required production env vars (set on Render)
+
+| Variable | Value | Why |
+|---|---|---|
+| `ENVIRONMENT` | `production` | Disables `/docs`, `/redoc`, `/openapi.json` |
+| `APP_TOKEN` | `python -c "import secrets; print(secrets.token_urlsafe(32))"` | Shared secret required on `X-App-Token` header |
+| `ALLOWED_ORIGINS` | `https://<your-app>.streamlit.app` | CORS allowlist (comma-separated for multiple) |
+| `RATE_LIMIT_ASK` | `20/minute` (default) | Per-IP cap on `/ask` + `/ask/sync` |
+| `RATE_LIMIT_STT` | `10/minute` (default) | Per-IP cap on `/api/stt` |
+| `OPENAI_API_KEY` | your key | LLM + Whisper |
+| `LLM_PROVIDER` | `openai` | |
+
+### Required Streamlit Cloud secrets
+
+Set under "Advanced settings → Secrets" (TOML format):
+
+```toml
+API_URL = "https://<your-render-service>.onrender.com"
+APP_TOKEN = "<same value as the Render APP_TOKEN>"
+```
+
+The frontend reads from `st.secrets` first and falls back to env vars, so the
+same names work locally via `.env`.
 
 ---
 

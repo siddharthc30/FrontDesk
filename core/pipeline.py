@@ -158,18 +158,18 @@ async def ask_stream(
     except FallbackError as exc:
         logger.warning("FallbackError: %s", exc)
         yield ("result", PipelineResponse(
-            answer=f"I couldn't generate a valid query for that question: {exc}",
+            answer="I couldn't generate a valid query for that question. Try rephrasing it.",
             insights="",
             hotels=[],
             path="fallback",
             confidence="guarded",
             declined=True,
-            decline_reason=str(exc),
+            decline_reason="The generated query could not be validated against the database schema.",
         ))
 
     except Exception as exc:  # noqa: BLE001
         logger.exception("Unexpected pipeline error: %s", exc)
-        yield ("error", {"message": f"Unexpected error: {exc}"})
+        yield ("error", {"message": "An unexpected error occurred. Please try again."})
 
     finally:
         conn.close()
@@ -198,12 +198,12 @@ async def ask(
                 last_result = data
             elif event_type == "error":
                 return PipelineResponse(
-                    answer=f"An unexpected error occurred: {data.get('message', '')}",
+                    answer="An unexpected error occurred. Please try again.",
                     insights="",
                     hotels=[],
                     path="declined",
                     declined=True,
-                    decline_reason=data.get("message", ""),
+                    decline_reason="Internal error.",
                 )
     except Exception as exc:  # noqa: BLE001
         logger.exception("Unexpected pipeline error in ask(): %s", exc)
@@ -213,7 +213,7 @@ async def ask(
             hotels=[],
             path="declined",
             declined=True,
-            decline_reason=str(exc),
+            decline_reason="Internal error.",
         )
 
     if last_result is None:

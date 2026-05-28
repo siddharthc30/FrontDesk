@@ -149,6 +149,8 @@ activemq-data/
 
 # Environments
 .env
+.env.*
+!.env.example
 .envrc
 .venv
 env/
@@ -224,10 +226,10 @@ Hotel_Reviews.csv.zip
 # Archives (raw downloads / dumps)
 *.zip
 
-# Large generated data (exceed GitHub's 100 MB limit; rebuild locally with scripts/)
-data/hotels.db
+# Large generated data
+# data/hotels.db is committed via Git LFS (see .gitattributes); intentionally NOT ignored.
 data/reviews.csv
-hotels.db
+/hotels.db
 
 # macOS
 .DS_Store

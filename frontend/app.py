@@ -52,7 +52,25 @@ st.set_page_config(page_title="Hotel NL Search", layout="wide", page_icon="🏨"
 st.title("🏨 Hotel Natural Language Search")
 st.caption("Ask any question about 1,000 hotels across 6 European cities — London, Paris, Barcelona, Milan, Vienna, Amsterdam")
 
-API_URL = os.environ.get("API_URL", "http://localhost:8000")
+def _secret_or_env(key: str, default: str = "") -> str:
+    """Read from st.secrets first (Streamlit Cloud convention), fall back to env."""
+    try:
+        if key in st.secrets:
+            return str(st.secrets[key])
+    except (FileNotFoundError, Exception):  # noqa: BLE001  — secrets.toml may not exist locally
+        pass
+    return os.environ.get(key, default)
+
+
+API_URL = _secret_or_env("API_URL", "http://localhost:8000")
+APP_TOKEN = _secret_or_env("APP_TOKEN", "")
+
+
+def _auth_headers(extra: dict | None = None) -> dict:
+    headers = dict(extra or {})
+    if APP_TOKEN:
+        headers["X-App-Token"] = APP_TOKEN
+    return headers
 
 
 # ── SSE helper ─────────────────────────────────────────────────────────────────
@@ -75,7 +93,7 @@ def stream_question(
         },
         stream=True,
         timeout=120,
-        headers={"Accept": "text/event-stream"},
+        headers=_auth_headers({"Accept": "text/event-stream"}),
     )
     resp.raise_for_status()
 
@@ -220,6 +238,7 @@ else:
                     f"{API_URL}/api/stt",
                     json={"audio_b64": encoded, "content_type": "audio/wav"},
                     timeout=30,
+                    headers=_auth_headers(),
                 )
                 stt_resp.raise_for_status()
                 st.session_state["voice_transcript"] = stt_resp.json().get("text") or ""
