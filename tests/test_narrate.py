@@ -70,3 +70,40 @@ def test_narration_does_not_assert_single_city_scope_for_multi_city_rows(monkeyp
     # And it acknowledges multiple cities.
     assert ("several cities" in lowered) or ("multiple cities" in lowered) \
         or sum(c.lower() in lowered for c in ("london", "paris", "barcelona", "milan", "vienna", "amsterdam")) >= 2
+
+
+def test_narration_truncates_to_50_rows_and_surfaces_total(monkeypatch):
+    """When >50 rows, narration must receive only 50 rows AND the true total."""
+    seen = {}
+
+    async def _fake_chat(messages, system=None, model_tier="main",
+                         response_json=False, json_schema=None, temperature=0.0):
+        seen["prompt"] = messages[-1]["content"]
+        return json.dumps({
+            "answer": "Showing a sample of 50 of 292 matches in Paris.",
+            "insights": "",
+        })
+
+    import core.llm as llm
+    monkeypatch.setattr(llm, "chat_completion", _fake_chat)
+
+    rows = [
+        {"hotel_id": i, "name": f"H{i}", "city": "Paris", "avg_score": 8.0}
+        for i in range(292)
+    ]
+    answer, _ = _run(narrate_mod.narrate_results(
+        question="all hotels in Paris",
+        rows=rows,
+        path="parameterized",
+        query_ran='{"city":"Paris"}',
+    ))
+
+    # Prompt must surface the true total count and the sample size.
+    assert "292" in seen["prompt"]
+    assert "sample of 50" in seen["prompt"]
+    # The dump must not leak rows past the 50-row ceiling (e.g. H50..H291).
+    assert "H0" in seen["prompt"]
+    assert "H291" not in seen["prompt"]
+    assert "H100" not in seen["prompt"]
+    # Answer surfaces the total.
+    assert "292" in answer

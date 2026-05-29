@@ -95,6 +95,39 @@ def test_near_me_uses_geo_not_city(monkeypatch):
     assert "lat=48.8566" in rec.seen_user
 
 
+def test_all_hotels_yields_no_limit(monkeypatch):
+    """'all hotels in Paris' must produce limit=None — not a reflexive 10."""
+    rec = _Recorder("search_hotels", {"city": "Paris"})
+    _patch_llm(monkeypatch, rec)
+
+    path, params = _run(router_mod.route_question("all hotels in Paris"))
+
+    assert path == "parameterized"
+    assert isinstance(params, SearchParams)
+    assert params.city == "Paris"
+    assert params.limit is None
+
+
+def test_top_n_yields_explicit_limit(monkeypatch):
+    """'top 5 hotels in Paris' must produce limit=5."""
+    rec = _Recorder("search_hotels", {"city": "Paris", "limit": 5})
+    _patch_llm(monkeypatch, rec)
+
+    path, params = _run(router_mod.route_question("top 5 hotels in Paris"))
+
+    assert path == "parameterized"
+    assert isinstance(params, SearchParams)
+    assert params.city == "Paris"
+    assert params.limit == 5
+
+
+def test_router_prompt_contains_limit_rule():
+    prompt = router_mod.ROUTER_SYSTEM_PROMPT
+    assert "LIMIT RULE" in prompt
+    assert "all hotels in Paris" in prompt
+    assert "top 5 hotels in Paris" in prompt
+
+
 def test_router_prompt_contains_deictic_resolution_rules():
     """Smoke-check the prompt actually carries the new instructions."""
     prompt = router_mod.ROUTER_SYSTEM_PROMPT

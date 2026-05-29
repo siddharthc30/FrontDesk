@@ -50,7 +50,7 @@ class SearchParams(BaseModel):
     aspect_filters: Optional[list[AspectFilter]] = None  # e.g. pool sentiment >= 0.7
     sort_by: Optional[str] = None       # "avg_score" | "total_reviews" | "distance" | "price" | "<aspect>_sentiment"
     sort_order: Optional[str] = "desc"  # "asc" | "desc"
-    limit: Optional[int] = 10
+    limit: Optional[int] = None
     user_lat: Optional[float] = None    # for geo queries
     user_lng: Optional[float] = None
     radius_km: Optional[float] = None   # max distance from user

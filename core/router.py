@@ -138,6 +138,18 @@ IMPORTANT:
 - Cities: London, Paris, Barcelona, Milan, Vienna, Amsterdam.
 - For "near me" queries, use user coordinates with haversine.
 - Amenity has_X flags mean "guests mentioned this" — not confirmed presence.
+
+LIMIT RULE (very important):
+- Only set `limit` when the user explicitly specifies a count
+  (e.g. "top 10", "5 cheapest", "show 3"). Use exactly that number.
+- For phrasings like "all", "every", "list", "show me", or when no count is
+  mentioned at all, leave `limit` UNSET (null/omitted). Do not default to 10.
+- Examples:
+  - "all hotels in Paris" → search_hotels(city="Paris")   (no limit)
+  - "list every hotel in London" → search_hotels(city="London")   (no limit)
+  - "hotels in Paris with a pool" → search_hotels(city="Paris", required_amenities=["has_pool"])   (no limit)
+  - "top 5 hotels in Paris" → search_hotels(city="Paris", limit=5)
+  - "10 cheapest hotels in Milan" → search_hotels(city="Milan", sort_by="price", sort_order="asc", limit=10)
 """
 
 # ── Provider-agnostic tool definitions (OpenAI format) ────────────────────────

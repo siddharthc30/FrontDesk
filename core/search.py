@@ -174,9 +174,9 @@ def search_hotels(params: SearchParams, conn: sqlite3.Connection) -> list[HotelR
             select += f" ORDER BY {prefix}avg_score DESC"
 
     # ── LIMIT ────────────────────────────────────────────────────────────────
-    limit = params.limit if params.limit is not None else 10
-    select += " LIMIT ?"
-    bind.append(limit)
+    if params.limit is not None:
+        select += " LIMIT ?"
+        bind.append(params.limit)
 
     rows = conn.execute(select, bind).fetchall()
     return [HotelRow(**dict(r)) for r in rows]

@@ -27,6 +27,8 @@ ASPECT_TYPICAL_RANGES = {
     "value":        0.37,
 }
 
+NARRATION_ROW_CEILING = 50
+
 _CONFIDENCE_LABELS = {
     "parameterized": "high",
     "semantic":      "high",
@@ -140,15 +142,27 @@ async def narrate_results(
     """
     from core.llm import chat_completion  # deferred import keeps module importable without LLM
 
-    n = len(rows)
-    formatted = _format_rows(rows)
+    total_n = len(rows)
+    truncated = total_n > NARRATION_ROW_CEILING
+    sample_rows = rows[:NARRATION_ROW_CEILING] if truncated else rows
+    n = len(sample_rows)
+    formatted = _format_rows(sample_rows)
     context_note = _build_context_note(path, query_ran)
 
-    empty_note = "No rows were returned for this query." if n == 0 else ""
+    empty_note = "No rows were returned for this query." if total_n == 0 else ""
+
+    sample_header = (
+        f"QUERY RESULTS (showing a sample of {n} of {total_n} matching rows):\n{formatted}\n"
+        f"\nNOTE: The user query matched {total_n} rows total; you are seeing only "
+        f"the first {n}. Acknowledge this in the answer (e.g. 'showing a sample of "
+        f"{n} of {total_n} matches'). Do NOT claim there are only {n} results.\n"
+        if truncated
+        else f"QUERY RESULTS ({total_n} rows):\n{formatted}\n"
+    )
 
     prompt = (
         f"USER QUESTION: {question}\n\n"
-        f"QUERY RESULTS ({n} rows):\n{formatted}\n"
+        f"{sample_header}"
         + (f"\nNOTE: {empty_note}\n" if empty_note else "")
         + (f"\n{context_note}\n" if context_note else "")
         + "\nRespond in JSON with exactly two fields:\n"

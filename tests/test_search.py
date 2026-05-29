@@ -128,6 +128,13 @@ def test_limit_respected(conn):
         assert len(results) == n
 
 
+def test_no_limit_returns_full_paris_set(conn):
+    """Regression: "all hotels in Paris" must not be silently capped at 10."""
+    results = search_hotels(SearchParams(city="Paris"), conn)
+    assert len(results) > 10
+    assert all(r.city == "Paris" for r in results)
+
+
 # ── geo radius ────────────────────────────────────────────────────────────────
 
 def _haversine(lat1, lon1, lat2, lon2):
