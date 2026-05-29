@@ -254,7 +254,7 @@ async def tts_endpoint(request: Request, req: TtsRequest):
     if len(req.text) > MAX_TTS_TEXT_CHARS:
         raise HTTPException(status_code=413, detail="Text too long for TTS.")
 
-    provider = os.environ.get("TTS_PROVIDER", "elevenlabs").lower()
+    provider = os.environ.get("TTS_PROVIDER", "openai").lower()
     has_openai_key = bool(os.environ.get("OPENAI_API_KEY"))
     has_elevenlabs_key = bool(os.environ.get("ELEVENLABS_API_KEY"))
     print(

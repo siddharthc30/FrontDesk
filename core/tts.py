@@ -2,7 +2,7 @@
 
 synthesize(text) -> MP3 bytes | None
 
-Provider selection via TTS_PROVIDER env var (default: elevenlabs).
+Provider selection via TTS_PROVIDER env var (default: openai — reuses OPENAI_API_KEY).
 Returns None if TTS is not configured or fails — callers degrade gracefully to text-only.
 Does NOT import FastAPI or Streamlit.
 """
@@ -15,7 +15,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_TTS_PROVIDER: str = os.environ.get("TTS_PROVIDER", "elevenlabs").lower()
+_TTS_PROVIDER: str = os.environ.get("TTS_PROVIDER", "openai").lower()
 
 
 def synthesize(text: str) -> Optional[bytes]:
