@@ -38,7 +38,9 @@ def synthesize(text: str) -> Optional[bytes]:
 def _elevenlabs_synthesize(text: str) -> Optional[bytes]:
     api_key = os.environ.get("ELEVENLABS_API_KEY", "")
     if not api_key:
-        logger.debug("ELEVENLABS_API_KEY not set — TTS skipped")
+        # Loud during the deploy diagnostic phase — DEBUG was invisible in prod.
+        logger.warning("ELEVENLABS_API_KEY not set — TTS skipped")
+        print("[TTS] ELEVENLABS_API_KEY not set — TTS skipped", flush=True)
         return None
 
     voice_id = os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")  # Rachel (default premade)
@@ -64,14 +66,19 @@ def _elevenlabs_synthesize(text: str) -> Optional[bytes]:
         resp.raise_for_status()
         return resp.content
     except Exception as exc:  # noqa: BLE001
+        import traceback as _tb
         logger.warning("ElevenLabs TTS failed: %s", exc)
-        return None
+        print(f"[TTS] ElevenLabs TTS failed:\n{_tb.format_exc()}", flush=True)
+        # Re-raise during the diagnostic phase so /api/tts can include the
+        # exception text in its 502 detail.
+        raise
 
 
 def _openai_tts_synthesize(text: str) -> Optional[bytes]:
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
-        logger.debug("OPENAI_API_KEY not set — TTS skipped")
+        logger.warning("OPENAI_API_KEY not set — TTS skipped")
+        print("[TTS] OPENAI_API_KEY not set — TTS skipped", flush=True)
         return None
 
     voice = os.environ.get("OPENAI_TTS_VOICE", "nova")
@@ -89,5 +96,10 @@ def _openai_tts_synthesize(text: str) -> Optional[bytes]:
         )
         return response.content
     except Exception as exc:  # noqa: BLE001
+        import traceback as _tb
         logger.warning("OpenAI TTS failed: %s", exc)
-        return None
+        print(f"[TTS] OpenAI TTS failed:\n{_tb.format_exc()}", flush=True)
+        # Re-raise during the diagnostic phase so /api/tts can include the
+        # exception text in its 502 detail. Without this the failure is
+        # invisible to the client.
+        raise

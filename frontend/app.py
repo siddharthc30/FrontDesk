@@ -367,28 +367,76 @@ if search_clicked and question:
             # /api/tts AFTER the result arrives, so the large base64 MP3
             # blob doesn't have to travel inside an SSE event (proxies on
             # Streamlit Cloud / Render were dropping it).
+            #
+            # ⚠️ DIAGNOSTIC MODE: errors are surfaced verbatim in the UI and
+            # printed to stdout so they appear in the deploy logs. Tighten
+            # this back to a quiet caption once the root cause is fixed.
             if voice_mode:
+                import traceback as _tb
+
                 tts_text = result_data.get("answer", "")
                 if insights:
                     tts_text = f"{tts_text}  {insights}" if tts_text else insights
-                if tts_text.strip():
+                tts_text = tts_text.strip()
+
+                if tts_text:
+                    tts_url = f"{API_URL}/api/tts"
+                    print(f"[TTS] POST {tts_url}  text_chars={len(tts_text)}", flush=True)
                     try:
                         tts_resp = requests.post(
-                            f"{API_URL}/api/tts",
+                            tts_url,
                             json={"text": tts_text},
                             timeout=60,
                             headers=_auth_headers(),
                         )
-                        tts_resp.raise_for_status()
-                        audio_b64 = tts_resp.json().get("audio_b64")
-                        if audio_b64:
-                            st.audio(base64.b64decode(audio_b64), format="audio/mp3")
-                        else:
-                            st.caption("🔇 Audio unavailable for this answer.")
-                    except requests.exceptions.HTTPError as exc:
-                        st.caption(f"🔇 Audio unavailable ({exc.response.status_code}).")
                     except Exception as exc:  # noqa: BLE001
-                        st.caption(f"🔇 Audio unavailable: {exc}")
+                        tb = _tb.format_exc()
+                        print(f"[TTS] request raised:\n{tb}", flush=True)
+                        st.error(f"🔇 TTS request failed: {exc}")
+                        st.code(tb, language="text")
+                    else:
+                        # Always show what came back — status, headers, body preview.
+                        print(
+                            f"[TTS] response status={tts_resp.status_code} "
+                            f"content_type={tts_resp.headers.get('content-type')} "
+                            f"body_bytes={len(tts_resp.content)}",
+                            flush=True,
+                        )
+                        if tts_resp.status_code != 200:
+                            body = tts_resp.text[:1000]
+                            print(f"[TTS] non-200 body: {body}", flush=True)
+                            st.error(
+                                f"🔇 TTS HTTP {tts_resp.status_code} from {tts_url}"
+                            )
+                            st.code(body or "(empty body)", language="text")
+                        else:
+                            try:
+                                payload = tts_resp.json()
+                            except Exception as exc:  # noqa: BLE001
+                                tb = _tb.format_exc()
+                                print(f"[TTS] json decode failed:\n{tb}", flush=True)
+                                st.error(f"🔇 TTS response was not JSON: {exc}")
+                                st.code(tts_resp.text[:1000], language="text")
+                            else:
+                                audio_b64 = payload.get("audio_b64")
+                                if audio_b64:
+                                    print(
+                                        f"[TTS] ok, audio_b64_chars={len(audio_b64)}",
+                                        flush=True,
+                                    )
+                                    st.audio(
+                                        base64.b64decode(audio_b64), format="audio/mp3"
+                                    )
+                                else:
+                                    print(
+                                        f"[TTS] 200 OK but no audio_b64 field. "
+                                        f"keys={list(payload.keys())}",
+                                        flush=True,
+                                    )
+                                    st.error(
+                                        "🔇 TTS returned 200 OK but no audio_b64 field."
+                                    )
+                                    st.code(str(payload)[:1000], language="text")
 
             # Hotels table + map
             hotels = result_data.get("hotels", [])

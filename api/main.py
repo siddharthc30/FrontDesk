@@ -244,26 +244,49 @@ async def tts_endpoint(request: Request, req: TtsRequest):
     answer from /ask, instead of inlining audio in the SSE result event.
     Keeps the SSE payload small so intermediate proxies (Streamlit Cloud /
     Render / Cloudflare) don't drop the large base64 audio blob.
+
+    ⚠️ DIAGNOSTIC MODE: errors include the underlying exception text so the
+    client (and deploy logs) can show what actually failed. Tighten back to
+    a sanitised message once the root cause is confirmed.
     """
     require_app_token(request.headers.get("X-App-Token"))
 
     if len(req.text) > MAX_TTS_TEXT_CHARS:
         raise HTTPException(status_code=413, detail="Text too long for TTS.")
 
+    provider = os.environ.get("TTS_PROVIDER", "elevenlabs").lower()
+    has_openai_key = bool(os.environ.get("OPENAI_API_KEY"))
+    has_elevenlabs_key = bool(os.environ.get("ELEVENLABS_API_KEY"))
+    print(
+        f"[TTS] /api/tts called: provider={provider} "
+        f"openai_key_set={has_openai_key} elevenlabs_key_set={has_elevenlabs_key} "
+        f"text_chars={len(req.text)}",
+        flush=True,
+    )
+
     from core.tts import synthesize
 
     try:
         audio_bytes = synthesize(req.text)
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        import traceback as _tb
+        tb = _tb.format_exc()
         logger.exception("TTS synthesis crashed")
-        raise HTTPException(status_code=502, detail="TTS provider error.")
-
-    if not audio_bytes:
-        # synthesize() returns None when no key / unknown provider / non-fatal
-        # provider failure. Be explicit so the client can surface it.
+        print(f"[TTS] synthesize raised:\n{tb}", flush=True)
         raise HTTPException(
-            status_code=503,
-            detail="TTS is not configured or the provider returned no audio.",
+            status_code=502,
+            detail=f"TTS provider crashed: {exc.__class__.__name__}: {exc}",
         )
 
+    if not audio_bytes:
+        msg = (
+            f"TTS returned no audio. provider={provider} "
+            f"openai_key_set={has_openai_key} elevenlabs_key_set={has_elevenlabs_key}. "
+            "Check the API service env vars and the API logs for a "
+            "'ElevenLabs TTS failed' or 'OpenAI TTS failed' warning."
+        )
+        print(f"[TTS] {msg}", flush=True)
+        raise HTTPException(status_code=503, detail=msg)
+
+    print(f"[TTS] success, audio_bytes={len(audio_bytes)}", flush=True)
     return {"audio_b64": base64.b64encode(audio_bytes).decode()}
